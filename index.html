@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+window.onerror=function(msg,src,line,col,err){window.parent.postMessage({type:'app-error',message:msg,source:src,lineno:line,colno:col,stack:err&&err.stack||''},'*');};
+window.onunhandledrejection=function(e){window.parent.postMessage({type:'app-error',message:'Unhandled promise rejection: '+(e.reason&&e.reason.message||e.reason||'unknown'),stack:e.reason&&e.reason.stack||''},'*');};
+window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&t.tagName==='SCRIPT'){var u=t.src||'';window.parent.postMessage({type:'app-error',message:'Failed to load script'+(u?': '+u:' (inline module)'),source:u},'*');}},true);
+(function(){var _f=window.fetch;window.fetch=function(){var a=arguments,u=typeof a[0]==='string'?a[0]:(a[0]&&a[0].url)||'';var p=_f.apply(this,a);p.then(function(r){if(r.status===500){r.clone().text().then(function(b){window.parent.postMessage({type:'fetch-error',url:u,status:500,body:b},'*');}).catch(function(){window.parent.postMessage({type:'fetch-error',url:u,status:500,body:''},'*');});}}).catch(function(e){window.parent.postMessage({type:'fetch-error',url:u,status:0,body:e.message||'fetch failed'},'*');});return p;};})();
+</script>
+<script src="https://builder.puter.com/runtime.js" defer></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#0b0f14" />
+<meta name="description" content="A Python REPL terminal running in your browser with PyScript." />
+<title>PyTerm — Python REPL</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
+<script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+<style>
+  :root { --term-size: 14px; }
+  html, body { height: 100%; background: #0b0f14; }
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; }
+  #screen { font-size: var(--term-size); line-height: 1.55; }
+  #output { white-space: pre-wrap; word-break: break-word; }
+  .o-out { color: #d6dde6; }
+  .o-err { color: #ff7b72; }
+  .o-prompt { color: #ffd43b; }
+  .o-input { color: #e6edf3; }
+  .o-info { color: #7d8b99; }
+  .o-result { color: #79c0ff; }
+  .o-accent { color: #7ee787; }
+  #cmd { caret-color: #ffd43b; }
+  #cmd::selection, #output ::selection { background: #264f78; }
+  .scroll::-webkit-scrollbar { width: 10px; }
+  .scroll::-webkit-scrollbar-thumb { background: #1f2933; border-radius: 10px; border: 2px solid #0b0f14; }
+  .scroll::-webkit-scrollbar-track { background: transparent; }
+  .btn { display:inline-flex; align-items:center; gap:.4rem; height:32px; padding:0 .65rem; border-radius:8px; color:#9aa7b4; font-size:13px; transition: background .15s, color .15s; }
+  .btn:hover { background:#161d25; color:#e6edf3; }
+  .btn:disabled { opacity:.4; pointer-events:none; }
+  .btn svg { width:16px; height:16px; }
+  .kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 1px 6px; border: 1px solid #26313c; border-radius: 5px; color: #9aa7b4; background:#10161d; }
+  .dot-pulse { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+  /* hide pyscript's own loading dialog */
+  py-splash, .py-overlay { display: none !important; }
+</style>
+    <!-- puter-pwa: generated, do not edit -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="PyTerm">
+    <!-- /puter-pwa -->
+</head>
+<body class="text-slate-200 overflow-hidden">
+  <div class="h-full flex flex-col">
+    <!-- Top bar -->
+    <header class="h-12 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-[#1a222b] bg-[#0d1218]">
+      <div class="flex items-center gap-3 min-w-0">
+        <img src="icon.svg" alt="" class="w-6 h-6 rounded-md" />
+        <div class="flex items-baseline gap-2 min-w-0">
+          <span class="font-semibold text-[14px] text-slate-100">PyTerm</span>
+          <span class="hidden sm:inline text-[12px] text-slate-500 truncate">Python REPL · PyScript</span>
+        </div>
+        <span id="status" class="ml-1 inline-flex items-center gap-1.5 text-[12px] px-2 py-0.5 rounded-full border border-[#26313c] text-slate-400">
+          <span id="status-dot" class="w-1.5 h-1.5 rounded-full bg-amber-400 dot-pulse"></span>
+          <span id="status-text">Starting</span>
+        </span>
+      </div>
+      <div class="flex items-center gap-0.5">
+        <button class="btn" id="btn-font-down" title="Smaller text"><i data-lucide="a-arrow-down"></i></button>
+        <button class="btn" id="btn-font-up" title="Larger text"><i data-lucide="a-arrow-up"></i></button>
+        <div class="w-px h-5 bg-[#1f2933] mx-1"></div>
+        <button class="btn" id="btn-copy" title="Copy session"><i data-lucide="copy"></i><span class="hidden md:inline">Copy</span></button>
+        <button class="btn" id="btn-clear" title="Clear screen (Ctrl+L)"><i data-lucide="eraser"></i><span class="hidden md:inline">Clear</span></button>
+        <button class="btn" id="btn-help" title="Shortcuts"><i data-lucide="keyboard"></i></button>
+        <button class="btn" id="btn-restart" title="Restart Python"><i data-lucide="rotate-ccw"></i><span class="hidden md:inline">Restart</span></button>
+      </div>
+    </header>
+
+    <!-- Terminal -->
+    <main id="screen" class="mono flex-1 overflow-y-auto scroll px-4 sm:px-6 py-4 cursor-text">
+      <div id="output"></div>
+      <div id="input-row" class="hidden items-start">
+        <span id="prompt" class="o-prompt select-none whitespace-pre">&gt;&gt;&gt; </span>
+        <textarea id="cmd" rows="1" spellcheck="false" autocomplete="off" autocapitalize="off"
+          class="mono flex-1 bg-transparent outline-none resize-none text-[#e6edf3] p-0 m-0 border-0 overflow-hidden"
+          style="font-size: inherit; line-height: inherit;"></textarea>
+      </div>
+      <div id="loader" class="o-info flex items-center gap-2">
+        <span class="inline-block w-2 h-4 bg-[#ffd43b] dot-pulse"></span>
+        <span id="loader-text">Downloading the Python runtime…</span>
+      </div>
+    </main>
+
+    <!-- Status bar -->
+    <footer class="h-7 shrink-0 flex items-center justify-between px-3 sm:px-4 border-t border-[#1a222b] bg-[#0d1218] text-[11px] text-slate-500 mono">
+      <div class="flex items-center gap-4 min-w-0">
+        <span id="py-version" class="truncate">Python —</span>
+        <span class="hidden sm:inline">UTF-8</span>
+      </div>
+      <div class="flex items-center gap-4">
+        <span id="history-count">0 commands</span>
+        <span class="hidden sm:inline">Tab to complete</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Shortcuts dialog -->
+  <div id="help" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4">
+    <div class="w-full max-w-md rounded-xl border border-[#1f2933] bg-[#0f151c]">
+      <div class="flex items-center justify-between px-5 h-12 border-b border-[#1a222b]">
+        <span class="font-medium text-[14px]">Keyboard shortcuts</span>
+        <button class="btn !h-8 !px-2" id="help-close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="p-5 space-y-3 text-[13px] text-slate-300">
+        <div class="flex justify-between"><span>Run line / continue block</span><span class="kbd">Enter</span></div>
+        <div class="flex justify-between"><span>New line without running</span><span class="kbd">Shift + Enter</span></div>
+        <div class="flex justify-between"><span>Previous / next command</span><span><span class="kbd">↑</span> <span class="kbd">↓</span></span></div>
+        <div class="flex justify-between"><span>Autocomplete</span><span class="kbd">Tab</span></div>
+        <div class="flex justify-between"><span>Cancel current input</span><span class="kbd">Ctrl + C</span></div>
+        <div class="flex justify-between"><span>Clear screen</span><span class="kbd">Ctrl + L</span></div>
+        <div class="pt-3 mt-1 border-t border-[#1a222b] text-slate-400 leading-relaxed">
+          Top-level <span class="mono text-[#ffd43b]">await</span> works. Install packages with
+          <span class="mono text-[#7ee787]">import micropip</span> then
+          <span class="mono text-[#7ee787]">await micropip.install("name")</span>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="py" src="./repl.py"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
