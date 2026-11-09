@@ -1,4 +1,5 @@
 import { createIcons, icons } from 'https://cdn.jsdelivr.net/npm/lucide@latest/+esm';
+import { Terminal } from './terminal.js';
 createIcons({ icons });
 
 const $ = (id) => document.getElementById(id);
@@ -14,6 +15,10 @@ const statusText = $('status-text');
 const PS1 = '>>> ';
 const PS2 = '... ';
 const HISTORY_KEY = 'pyterm-history';
+const COLORS = {
+  err: '#ff7b72', prompt: '#ffd43b', input: '#e6edf3',
+  info: '#7d8b99', result: '#79c0ff', accent: '#7ee787',
+};
 
 let ready = false;
 let busy = false;
@@ -25,34 +30,57 @@ let histIndex = history.length;
 let draft = '';
 let pyVersion = '';
 
-/* ---------- output ---------- */
-let lastSpan = null;
+/* ---------- terminal ---------- */
+const term = new Terminal(output, {
+  onRender: () => { screen.scrollTop = screen.scrollHeight; },
+  onBell: () => {
+    screen.classList.remove('bell');
+    void screen.offsetWidth;
+    screen.classList.add('bell');
+  },
+  onTitle: (t) => {
+    $('term-title').textContent = t || 'Python REPL · PyScript';
+    document.title = t ? `${t} — PyTerm` : 'PyTerm — Python REPL';
+  },
+});
+
 function write(text, kind = 'out') {
   if (!text) return;
-  const cls = 'o-' + kind;
-  if (lastSpan && lastSpan.className === cls && lastSpan.parentNode === output) {
-    lastSpan.appendChild(document.createTextNode(text));
-  } else {
-    lastSpan = document.createElement('span');
-    lastSpan.className = cls;
-    lastSpan.textContent = text;
-    output.appendChild(lastSpan);
-  }
-  scrollToEnd();
+  if (kind === 'out') term.write(text);
+  else term.writeKind(text, COLORS[kind]);
 }
-function ensureNewline() {
-  const t = output.textContent;
-  if (t.length && !t.endsWith('\n')) write('\n', 'out');
-}
-function clearScreen() {
-  output.innerHTML = '';
-  lastSpan = null;
-}
-function scrollToEnd() {
-  requestAnimationFrame(() => { screen.scrollTop = screen.scrollHeight; });
-}
+function ensureNewline() { term.prepareForPrompt(); }
+function clearScreen() { term.clear(); if (ready && !busy) term.attachInput(inputRow); }
 window.pyterm_write = (text, kind) => write(text, kind);
 window.pyterm_clear = () => clearScreen();
+
+/* ---------- size ---------- */
+let charW = 0, lineH = 0;
+function measure() {
+  const probe = document.createElement('div');
+  probe.className = 'tl';
+  probe.style.cssText = 'position:absolute;visibility:hidden;';
+  probe.textContent = 'M'.repeat(50);
+  probe.style.width = 'auto';
+  probe.style.display = 'inline-block';
+  output.appendChild(probe);
+  const r = probe.getBoundingClientRect();
+  charW = r.width / 50 || 8;
+  lineH = r.height || 20;
+  probe.remove();
+}
+function fit() {
+  measure();
+  const cs = getComputedStyle(screen);
+  const h = screen.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const cols = Math.max(20, Math.floor(output.clientWidth / charW));
+  const rows = Math.max(5, Math.floor(h / lineH));
+  term.resize(cols, rows);
+  $('term-size').textContent = `${cols}×${rows}`;
+  if (window.pyterm_set_size) { try { window.pyterm_set_size(cols, rows); } catch {} }
+}
+new ResizeObserver(() => fit()).observe(screen);
+fit();
 
 /* ---------- status ---------- */
 function setStatus(state) {
@@ -71,7 +99,9 @@ function banner() {
   write(`Python ${pyVersion}`, 'accent');
   write(' on WebAssembly (Pyodide via PyScript)\n', 'info');
   write('Type "help", "copyright", "credits" or "license" for more information.\n', 'info');
-  write('Extras: clear() wipes the screen · top-level await supported · micropip for packages\n', 'info');
+  write('VT100/ANSI escape sequences are supported — try ', 'info');
+  write('await demo()', 'prompt');
+  write('. clear() wipes the screen.\n', 'info');
 }
 
 /* ---------- input ---------- */
@@ -79,7 +109,16 @@ function setPrompt(p) { promptEl.textContent = p; }
 function showInput(show) {
   inputRow.classList.toggle('hidden', !show);
   inputRow.classList.toggle('flex', show);
-  if (show) { autosize(); cmd.focus({ preventScroll: true }); scrollToEnd(); }
+  term.showCursor = !show;
+  if (show) {
+    ensureNewline();
+    term.attachInput(inputRow);
+    autosize();
+    cmd.focus({ preventScroll: true });
+    screen.scrollTop = screen.scrollHeight;
+  } else {
+    term.detachInput();
+  }
 }
 function autosize() {
   cmd.style.height = 'auto';
@@ -99,12 +138,8 @@ function addHistory(entry) {
   updateHistoryCount();
 }
 
-async function submit() {
-  if (!ready || busy) return;
-  const raw = cmd.value;
+async function runSource(raw) {
   const lines = raw.split('\n');
-  cmd.value = '';
-  autosize();
   addHistory(raw.replace(/\s+$/, ''));
   busy = true;
   showInput(false);
@@ -122,6 +157,7 @@ async function submit() {
       lastResult = 'complete';
     }
     if (lastResult === 'exit') {
+      ensureNewline();
       write('Interpreter restarted.\n', 'info');
       continuing = false;
       lastResult = 'complete';
@@ -132,22 +168,27 @@ async function submit() {
     if (continuing && line.trimEnd().endsWith(':')) lastIndent += '    ';
   }
 
-  ensureNewline();
   busy = false;
   setStatus('ready');
   setPrompt(continuing ? PS2 : PS1);
-  if (continuing && lines.length === 1 && lines[0].trim() !== '') {
-    cmd.value = lastIndent;
-  } else {
-    lastIndent = '';
-  }
+  if (continuing && lines.length === 1 && lines[0].trim() !== '') cmd.value = lastIndent;
+  else lastIndent = '';
   showInput(true);
   cmd.setSelectionRange(cmd.value.length, cmd.value.length);
 }
 
+function submit() {
+  if (!ready || busy) return;
+  const raw = cmd.value;
+  cmd.value = '';
+  autosize();
+  runSource(raw);
+}
+
 function cancelInput() {
+  term.detachInput();
   ensureNewline();
-  write((continuing ? PS2 : PS1), 'prompt');
+  write(continuing ? PS2 : PS1, 'prompt');
   write(cmd.value + '\n', 'input');
   write('KeyboardInterrupt\n', 'err');
   cmd.value = '';
@@ -155,8 +196,7 @@ function cancelInput() {
   lastIndent = '';
   try { window.pyterm_reset_buffer(); } catch {}
   setPrompt(PS1);
-  autosize();
-  scrollToEnd();
+  showInput(true);
 }
 
 function commonPrefix(list) {
@@ -171,10 +211,7 @@ function doComplete() {
   const before = cmd.value.slice(0, pos);
   const lineStart = before.lastIndexOf('\n') + 1;
   const currentLine = before.slice(lineStart);
-  if (!currentLine.trim() || /\s$/.test(currentLine)) {
-    insertText('    ');
-    return;
-  }
+  if (!currentLine.trim() || /\s$/.test(currentLine)) { insertText('    '); return; }
   let res;
   try { res = window.pyterm_complete(currentLine); } catch { return; }
   const [options, start] = res;
@@ -188,11 +225,12 @@ function doComplete() {
     cmd.setSelectionRange(c, c);
     autosize();
   } else if (options.length > 1) {
+    term.detachInput();
     ensureNewline();
-    write((continuing ? PS2 : PS1), 'prompt');
+    write(continuing ? PS2 : PS1, 'prompt');
     write(cmd.value + '\n', 'input');
     const width = Math.max(...options.map((o) => o.length)) + 2;
-    const cols = Math.max(1, Math.floor((screen.clientWidth - 48) / (charWidth() * width)));
+    const cols = Math.max(1, Math.floor(term.cols / width));
     let out = '';
     options.slice(0, 300).forEach((o, i) => {
       out += o.padEnd(width);
@@ -200,20 +238,9 @@ function doComplete() {
     });
     if (options.length > 300) out += `\n… ${options.length - 300} more`;
     write(out.trimEnd() + '\n', 'info');
+    showInput(true);
+    cmd.setSelectionRange(pos, pos);
   }
-}
-
-let _cw = 0;
-function charWidth() {
-  if (_cw) return _cw;
-  const s = document.createElement('span');
-  s.className = 'mono';
-  s.style.visibility = 'hidden';
-  s.textContent = 'MMMMMMMMMM';
-  screen.appendChild(s);
-  _cw = s.getBoundingClientRect().width / 10 || 8;
-  s.remove();
-  return _cw;
 }
 
 function insertText(t) {
@@ -229,8 +256,7 @@ cmd.addEventListener('keydown', (e) => {
     submit();
   } else if (e.key === 'Tab') {
     e.preventDefault();
-    if (e.shiftKey) return;
-    doComplete();
+    if (!e.shiftKey) doComplete();
   } else if (e.key === 'ArrowUp') {
     const atTop = cmd.value.lastIndexOf('\n', cmd.selectionStart - 1) === -1;
     if (!atTop || !history.length) return;
@@ -254,8 +280,8 @@ cmd.addEventListener('keydown', (e) => {
   } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
     e.preventDefault();
     clearScreen();
+    cmd.focus();
   } else if (e.key === 'Backspace' && continuing && cmd.selectionStart === cmd.selectionEnd) {
-    // dedent by 4 when deleting inside leading whitespace
     const pos = cmd.selectionStart;
     const lineStart = cmd.value.lastIndexOf('\n', pos - 1) + 1;
     const lead = cmd.value.slice(lineStart, pos);
@@ -268,7 +294,8 @@ cmd.addEventListener('keydown', (e) => {
   }
 });
 
-screen.addEventListener('mouseup', () => {
+screen.addEventListener('mouseup', (e) => {
+  if (e.target.closest('a')) return;
   if (window.getSelection().toString()) return;
   if (ready && !busy) cmd.focus({ preventScroll: true });
 });
@@ -278,32 +305,35 @@ let fontSize = parseInt(sessionStorage.getItem('pyterm-font') || '14', 10);
 function applyFont() {
   document.documentElement.style.setProperty('--term-size', fontSize + 'px');
   sessionStorage.setItem('pyterm-font', String(fontSize));
-  _cw = 0;
   autosize();
+  fit();
 }
 applyFont();
 $('btn-font-up').onclick = () => { fontSize = Math.min(24, fontSize + 1); applyFont(); };
 $('btn-font-down').onclick = () => { fontSize = Math.max(10, fontSize - 1); applyFont(); };
 $('btn-clear').onclick = () => { clearScreen(); if (ready && !busy) cmd.focus(); };
+$('btn-demo').onclick = () => { if (ready && !busy) runSource('await demo()'); };
 
 $('btn-copy').onclick = async () => {
   const btn = $('btn-copy');
+  const label = btn.querySelector('span');
   try {
-    await navigator.clipboard.writeText(output.textContent);
-    btn.querySelector('span') && (btn.querySelector('span').textContent = 'Copied');
-    setTimeout(() => { btn.querySelector('span') && (btn.querySelector('span').textContent = 'Copy'); }, 1400);
+    await navigator.clipboard.writeText(term.getText());
+    if (label) label.textContent = 'Copied';
+    setTimeout(() => { if (label) label.textContent = 'Copy'; }, 1400);
   } catch {}
 };
 
-$('btn-restart').onclick = async () => {
+$('btn-restart').onclick = () => {
   if (!ready || busy) return;
   try { window.pyterm_restart(); } catch (e) { write(String(e) + '\n', 'err'); return; }
   continuing = false;
   lastIndent = '';
   cmd.value = '';
   setPrompt(PS1);
-  ensureNewline();
-  write('\n──────── RESTART ────────\n\n', 'info');
+  term.detachInput();
+  term.reset();
+  fit();
   banner();
   showInput(true);
 };
@@ -337,6 +367,7 @@ window.pyterm_ready = (version) => {
   loader.remove();
   $('py-version').textContent = 'Python ' + version.split(' ')[0];
   setStatus('ready');
+  fit();
   banner();
   setPrompt(PS1);
   showInput(true);

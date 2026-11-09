@@ -24,14 +24,23 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
   body { font-family: 'Inter', system-ui, sans-serif; }
   .mono { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; }
   #screen { font-size: var(--term-size); line-height: 1.55; }
-  #output { white-space: pre-wrap; word-break: break-word; }
-  .o-out { color: #d6dde6; }
-  .o-err { color: #ff7b72; }
-  .o-prompt { color: #ffd43b; }
-  .o-input { color: #e6edf3; }
-  .o-info { color: #7d8b99; }
-  .o-result { color: #79c0ff; }
-  .o-accent { color: #7ee787; }
+  #output { color: #d6dde6; position: relative; }
+  #output.reverse-video { background: #0b0f14; filter: invert(1) hue-rotate(180deg); }
+  .tl { white-space: pre; min-height: 1.55em; overflow: hidden; }
+  .tl a { color: inherit; text-decoration: none; }
+  .tl a:hover > span, .tl a:hover { text-decoration: underline; }
+  .tl.dw .ln, .tl.dht .ln, .tl.dhb .ln { display: inline-block; transform-origin: left top; }
+  .tl.dw .ln { transform: scaleX(2); }
+  .tl.dht, .tl.dhb { height: 1.55em; }
+  .tl.dht .ln { transform: scale(2, 2); }
+  .tl.dhb .ln { transform: scale(2, 2) translateY(-50%); }
+  .w2 { display: inline-block; width: 2ch; }
+  .cur { background: #ffd43b; color: #0b0f14; }
+  .blink { animation: tblink 1s steps(1) infinite; }
+  @keyframes tblink { 50% { opacity: 0; } }
+  #screen.bell { animation: bell .25s ease-out; }
+  @keyframes bell { from { background: #1c2530; } to { background: #0b0f14; } }
+  #input-row { min-height: 1.55em; }
   #cmd { caret-color: #ffd43b; }
   #cmd::selection, #output ::selection { background: #264f78; }
   .scroll::-webkit-scrollbar { width: 10px; }
@@ -65,7 +74,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
         <img src="icon.svg" alt="" class="w-6 h-6 rounded-md" />
         <div class="flex items-baseline gap-2 min-w-0">
           <span class="font-semibold text-[14px] text-slate-100">PyTerm</span>
-          <span class="hidden sm:inline text-[12px] text-slate-500 truncate">Python REPL · PyScript</span>
+          <span id="term-title" class="hidden sm:inline text-[12px] text-slate-500 truncate max-w-[260px]">Python REPL · PyScript</span>
         </div>
         <span id="status" class="ml-1 inline-flex items-center gap-1.5 text-[12px] px-2 py-0.5 rounded-full border border-[#26313c] text-slate-400">
           <span id="status-dot" class="w-1.5 h-1.5 rounded-full bg-amber-400 dot-pulse"></span>
@@ -76,6 +85,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
         <button class="btn" id="btn-font-down" title="Smaller text"><i data-lucide="a-arrow-down"></i></button>
         <button class="btn" id="btn-font-up" title="Larger text"><i data-lucide="a-arrow-up"></i></button>
         <div class="w-px h-5 bg-[#1f2933] mx-1"></div>
+        <button class="btn" id="btn-demo" title="Run the escape sequence demo"><i data-lucide="palette"></i><span class="hidden md:inline">Demo</span></button>
         <button class="btn" id="btn-copy" title="Copy session"><i data-lucide="copy"></i><span class="hidden md:inline">Copy</span></button>
         <button class="btn" id="btn-clear" title="Clear screen (Ctrl+L)"><i data-lucide="eraser"></i><span class="hidden md:inline">Clear</span></button>
         <button class="btn" id="btn-help" title="Shortcuts"><i data-lucide="keyboard"></i></button>
@@ -103,6 +113,8 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
       <div class="flex items-center gap-4 min-w-0">
         <span id="py-version" class="truncate">Python —</span>
         <span class="hidden sm:inline">UTF-8</span>
+        <span class="hidden sm:inline">VT100 · xterm-256color</span>
+        <span id="term-size" class="hidden sm:inline">80×24</span>
       </div>
       <div class="flex items-center gap-4">
         <span id="history-count">0 commands</span>
@@ -129,6 +141,11 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
           Top-level <span class="mono text-[#ffd43b]">await</span> works. Install packages with
           <span class="mono text-[#7ee787]">import micropip</span> then
           <span class="mono text-[#7ee787]">await micropip.install("name")</span>.
+        </div>
+        <div class="text-slate-400 leading-relaxed">
+          Output understands VT100/ANSI escape codes: <span class="mono text-[#7ee787]">\r</span> returns to the start of the line,
+          plus colours (16, 256, truecolour), text styles, cursor movement, erasing, scroll regions, line drawing and the alternate screen.
+          Run <span class="mono text-[#ffd43b]">await demo()</span> to see them.
         </div>
       </div>
     </div>
