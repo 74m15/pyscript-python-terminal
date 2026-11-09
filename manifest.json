@@ -9,7 +9,7 @@
   "id": "./",
   "name": "PyTerm — Python REPL",
   "short_name": "PyTerm",
-  "description": "PyTerm is a full Python 3.12 REPL in your browser: run code, open .py scripts and install packages, with an ANSI/VT100 color terminal. No install needed.",
+  "description": "PyTerm is a full Python 3.14 REPL in your browser: run code, open .py scripts and install packages, with an ANSI/VT100 color terminal. No install needed.",
   "start_url": "./",
   "scope": "./",
   "background_color": "#0b0f14",

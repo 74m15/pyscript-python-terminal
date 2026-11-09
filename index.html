@@ -11,15 +11,15 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0b0f14" />
-<meta name="description" content="PyTerm is a full Python 3.12 REPL in your browser: run code, open .py scripts and install packages, with an ANSI/VT100 color terminal. No install needed." />
+<meta name="description" content="PyTerm is a full Python 3.14 REPL in your browser: run code, open .py scripts and install packages, with an ANSI/VT100 color terminal. No install needed." />
 <meta name="application-name" content="PyTerm" />
 <meta property="og:type" content="website" />
 <meta property="og:title" content="PyTerm — Python REPL" />
-<meta property="og:description" content="A full Python 3.12 REPL in your browser with a VT100 color terminal. Run code, open .py scripts, install packages." />
+<meta property="og:description" content="A full Python 3.14 REPL in your browser with a VT100 color terminal. Run code, open .py scripts, install packages." />
 <meta property="og:image" content="assets/preview.png" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="PyTerm — Python REPL" />
-<meta name="twitter:description" content="A full Python 3.12 REPL in your browser with a VT100 color terminal." />
+<meta name="twitter:description" content="A full Python 3.14 REPL in your browser with a VT100 color terminal." />
 <meta name="twitter:image" content="assets/preview.png" />
 <link rel="icon" type="image/svg+xml" href="icon.svg" />
 <title>PyTerm — Python REPL</title>
@@ -27,8 +27,8 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
-<script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+<link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
+<script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
 <style>
   :root { --term-size: 14px; }
   html, body { height: 100%; background: #0b0f14; }
@@ -177,7 +177,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
   </div>
   <input type="file" id="file-input" accept=".py,.pyw,.txt,text/x-python,text/plain" class="hidden" />
 
-  <script type="py" src="./repl.py"></script>
+  <script type="py" src="./repl.py" config='{"interpreter": "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs"}'></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

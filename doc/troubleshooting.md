@@ -15,7 +15,7 @@
 | Long computations freeze the page | Same reason. Split the work and `await asyncio.sleep(0)` from time to time. Ctrl+C cannot interrupt running code. |
 | No real interrupt | Ctrl+C only cancels the *input line*. To stop a runaway loop, reload the page. |
 | `os.get_terminal_size()` fails | There is no TTY. Use `shutil.get_terminal_size()`, which reads `COLUMNS` / `LINES`. |
-| `sys.stdout.isatty()` is `False` | Some libraries then turn colour off; force it (e.g. `Console(force_terminal=True)` in rich, `FORCE_COLOR=1`). |
+| TTY detection varies | While REPL code runs, Pyodide's console streams report `isatty() == True`, so most libraries emit colour. If one still doesn't, force it (e.g. `Console(force_terminal=True)` in rich, `FORCE_COLOR=1`). |
 | No terminal replies | Cursor position reports, device attributes and similar queries are ignored, because the output stream has no input side. Programs that wait for a reply will hang or fall back. |
 | No mouse or keyboard reporting | Full-screen TUI frameworks that need raw keyboard input (curses, prompt_toolkit, textual) can't take input. |
 | No text reflow | Output wrapped at one width is not re-wrapped when the window is resized. |
@@ -63,7 +63,7 @@
 ## FAQ
 
 **Which Python version is it?**
-CPython 3.12 compiled to WebAssembly by Pyodide 0.26.4, loaded through PyScript 2024.11.1. The exact version is shown in the banner and status bar.
+CPython 3.14.2 compiled to WebAssembly by Pyodide 314.0.7, loaded through PyScript 2026.7.3. The exact version is shown in the banner and status bar.
 
 **Does my code run on a server?**
 No. Everything runs in your browser. No code or data is sent anywhere, apart from downloading the runtime and any packages you install.

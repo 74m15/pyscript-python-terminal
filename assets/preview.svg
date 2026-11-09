@@ -8,7 +8,7 @@
     <path fill="#FFD43B" d="M64.3 123.2c30.2 0 28.3-13.1 28.3-13.1l-.03-13.6H63.8v-4.1H104s19.3 2.2 19.3-28.3-16.9-29.4-16.9-29.4H96.3v14.1s.5 16.9-16.6 16.9H51.1s-16-.3-16 15.5v26.1s-2.4 15.9 29.2 15.9zm15.9-9.1a5.2 5.2 0 1 1 0-10.4 5.2 5.2 0 0 1 0 10.4z"/>
   </g>
   <text x="380" y="270" font-family="Helvetica, Arial, sans-serif" font-size="84" font-weight="700" fill="#f0f6fc">PyTerm</text>
-  <text x="380" y="330" font-family="Helvetica, Arial, sans-serif" font-size="32" fill="#9aa7b4">Python 3.12 REPL in your browser</text>
+  <text x="380" y="330" font-family="Helvetica, Arial, sans-serif" font-size="32" fill="#9aa7b4">Python 3.14 REPL in your browser</text>
   <text x="380" y="420" font-family="Menlo, Consolas, monospace" font-size="30" fill="#ffd43b">&gt;&gt;&gt; <tspan fill="#e6edf3">print("Hello, Puter!")</tspan></text>
   <text x="380" y="462" font-family="Menlo, Consolas, monospace" font-size="30" fill="#d6dde6">Hello, Puter!</text>
   <text x="380" y="504" font-family="Menlo, Consolas, monospace" font-size="30" fill="#ffd43b">&gt;&gt;&gt; <tspan fill="#ffd43b">█</tspan></text>

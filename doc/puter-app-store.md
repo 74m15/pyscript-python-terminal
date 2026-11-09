@@ -64,11 +64,11 @@ Copy these values into the app's settings in the Puter Developer Center.
 
 ### Short description (store card, ≤ 140 chars)
 
-> A full Python 3.12 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.
+> A full Python 3.14 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.
 
 ### Long description
 
-> **PyTerm** brings the real Python 3.12 interpreter to Puter, running entirely in your browser with WebAssembly. Nothing to install, no server.
+> **PyTerm** brings the real Python 3.14 interpreter to Puter, running entirely in your browser with WebAssembly. Nothing to install, no server.
 >
 > • Classic `>>>` REPL with multi-line blocks, auto-indent, history and Tab completion
 > • Top-level `await` and `micropip` to install packages like numpy, pandas or rich
@@ -94,7 +94,7 @@ Copy these values into the app's settings in the Puter Developer Center.
      name: 'pyterm',
      indexURL: 'https://<your-site>.puter.site/',
      title: 'PyTerm — Python REPL',
-     description: 'A full Python 3.12 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.',
+     description: 'A full Python 3.14 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.',
      icon: 'https://<your-site>.puter.site/assets/icon-512.png',
      maximizeOnStart: false,
      filetypeAssociations: ['.py', '.pyw'],

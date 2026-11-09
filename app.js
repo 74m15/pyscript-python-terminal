@@ -498,7 +498,7 @@ function setupPuterApp() {
         ] },
         { label: 'Help', items: [
           { label: 'Keyboard Shortcuts', action: openHelp },
-          { label: 'Python Documentation', action: () => window.open('https://docs.python.org/3.12/', '_blank') },
+          { label: 'Python Documentation', action: () => window.open('https://docs.python.org/3.14/', '_blank') },
         ] },
       ],
     });

@@ -32,7 +32,7 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
 
 | Item | Value |
 |---|---|
-| Runtime | PyScript 2024.11.1 → Pyodide 0.26.4 → CPython 3.12 (WebAssembly) |
+| Runtime | PyScript 2026.7.3 → Pyodide 314.0.7 → CPython 3.14.2 (WebAssembly) |
 | Terminal type | `xterm-256color` (`COLORTERM=truecolor`) |
 | Scrollback | 5,000 lines |
 | History | 500 commands, per browser tab session |

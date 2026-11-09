@@ -30,7 +30,7 @@ The first visit downloads about 10 MB. Later visits load from the browser cache 
 When Python is ready, the status pill turns **Ready** (green) and the banner appears:
 
 ```
-Python 3.12.x (main, ...) on WebAssembly (Pyodide via PyScript)
+Python 3.14.x (main, ...) on WebAssembly (Pyodide via PyScript)
 Type "help", "copyright", "credits" or "license" for more information.
 VT100/ANSI escape sequences are supported — try await demo(). clear() wipes the screen.
 >>>

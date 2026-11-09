@@ -39,7 +39,7 @@ After editing a file, reload the page. If an old version keeps loading, do a har
 | `index.html` | HTML/CSS | ~170 lines | Layout, styles, script loading |
 | `app.js` | JS (ES module) | ~400 lines | UI controller |
 | `terminal.js` | JS (ES module) | ~800 lines | Terminal emulator |
-| `repl.py` | Python 3.12 | ~180 lines | Interactive console and bridge |
+| `repl.py` | Python 3.14 | ~180 lines | Interactive console and bridge |
 | `icon.svg` | SVG | — | App icon |
 | `doc/` | Markdown | — | Documentation |
 

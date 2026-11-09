@@ -173,14 +173,20 @@ def make_console():
 
 ## Upgrading PyScript / Pyodide
 
-The PyScript version is set in two tags in `index.html`:
+Versions are set in `index.html`:
 
 ```html
-<link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
-<script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+<link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
+<script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
+...
+<script type="py" src="./repl.py"
+        config='{"interpreter": "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs"}'></script>
 ```
 
-Change both to the new release. Then check:
+- **PyScript:** change both release numbers. The latest release is listed at `https://pyscript.net/version.json`.
+- **Pyodide:** change the version in the `interpreter` URL. It must be a full URL to `pyodide.mjs`, because a bare version number is resolved as a relative path and fails to load. The latest version is on npm (`pyodide`) and on the Pyodide changelog. Removing the `interpreter` key uses the default bundled with the PyScript release.
+
+Then check:
 
 - `pyodide.console.PyodideConsole` still has `push`, `complete`, `buffer` and an async `runcode(source, code)`. `SafeConsole` overrides `runcode`.
 - The future returned by `push` still has `syntax_check` and `formatted_error`.

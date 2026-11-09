@@ -43,7 +43,7 @@ JavaScript and Python talk only through a few functions attached to `window` (se
 
 ### `index.html`
 - Required error-reporting and runtime scripts, meta tags, fonts.
-- Loads **Tailwind CSS** (Play CDN), **PyScript** `core.css` and `core.js` (2024.11.1).
+- Loads **Tailwind CSS** (Play CDN), **PyScript** `core.css` and `core.js` (2026.7.3). The `<script type="py">` tag pins the interpreter to Pyodide 314.0.7 via its `config` attribute.
 - Custom CSS for the terminal: line boxes (`.tl`), wide characters (`.w2`), the block cursor (`.cur`), blink animation, double-width and double-height lines, reverse-video mode, bell flash, scrollbars.
 - Markup: header with status pill and toolbar, the `#screen` scroll container holding `#output` (emulator root) and `#input-row` (prompt and textarea), the loader, the status bar, and the shortcuts dialog.
 - `<script type="py" src="./repl.py">` starts Python. `<script type="module" src="./app.js">` starts the UI.
@@ -171,8 +171,9 @@ All loaded from CDNs at runtime:
 
 | Dependency | URL | Purpose |
 |---|---|---|
-| PyScript 2024.11.1 | `pyscript.net/releases/2024.11.1/core.js`, `core.css` | Loads Pyodide and runs `repl.py` |
-| Pyodide 0.26.4 | fetched by PyScript from `cdn.jsdelivr.net/pyodide/` | CPython on WebAssembly |
+| PyScript 2026.7.3 | `pyscript.net/releases/2026.7.3/core.js`, `core.css` | Loads Pyodide and runs `repl.py` |
+| Pyodide 314.0.7 (CPython 3.14.2) | `cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs` | CPython on WebAssembly |
+| Puter.js v2 | `js.puter.com/v2/` | Desktop integration (menu bar, file pickers, window title) |
 | Tailwind CSS | `cdn.tailwindcss.com` | Utility classes for layout |
 | Lucide | `cdn.jsdelivr.net/npm/lucide@latest/+esm` | Toolbar icons |
 | Google Fonts | Inter, JetBrains Mono | UI and terminal fonts |

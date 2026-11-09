@@ -2,14 +2,14 @@
 
 <img src="icon.svg" alt="PyTerm logo" width="72" />
 
-> A full Python 3.12 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.
+> A full Python 3.14 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.
 
-PyTerm is a terminal-style web application that launches a full **CPython 3.12 interactive interpreter (REPL)** directly in the browser. Python runs on WebAssembly through [PyScript](https://pyscript.net) / [Pyodide](https://pyodide.org). No server, no installation and no account are needed: open the page and start typing Python.
+PyTerm is a terminal-style web application that launches a full **CPython 3.14 interactive interpreter (REPL)** directly in the browser. Python runs on WebAssembly through [PyScript](https://pyscript.net) / [Pyodide](https://pyodide.org). No server, no installation and no account are needed: open the page and start typing Python.
 
 Its output goes through a **VT100 / xterm-compatible terminal emulator** written for the project. Programs can use ANSI colours, cursor movement, `\r` carriage returns (progress bars, spinners), screen and line erasing, scroll regions, line-drawing characters, the alternate screen and more.
 
 ```
-Python 3.12.x (main, ...) on WebAssembly (Pyodide via PyScript)
+Python 3.14.x (main, ...) on WebAssembly (Pyodide via PyScript)
 Type "help", "copyright", "credits" or "license" for more information.
 >>> import math
 >>> math.sqrt(2)
@@ -23,7 +23,7 @@ Type "help", "copyright", "credits" or "license" for more information.
 ## Features
 
 ### Python REPL
-- Real CPython 3.12 (Pyodide 0.26) with the full standard library.
+- Real CPython 3.14 (Pyodide 314.0.7) with the full standard library.
 - Classic `>>>` / `...` prompts, multi-line blocks (`for`, `def`, `class`, `with`, …) with automatic indentation.
 - Expression results echoed with `repr()`, last result stored in `_`.
 - Full tracebacks for errors; syntax errors reported without running the line.
@@ -110,7 +110,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 
 ## Tech stack
 
-- [PyScript 2024.11.1](https://pyscript.net) (bundling Pyodide 0.26.4 / Python 3.12)
+- [PyScript 2026.7.3](https://pyscript.net) running [Pyodide 314.0.7](https://pyodide.org) (CPython 3.14.2)
 - Vanilla JavaScript ES modules (no framework, no bundler)
 - [Puter.js](https://developer.puter.com) for desktop integration (menu bar, Drive file pickers, file associations)
 - [Tailwind CSS](https://tailwindcss.com) (Play CDN) for layout

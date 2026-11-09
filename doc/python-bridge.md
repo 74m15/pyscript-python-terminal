@@ -170,7 +170,7 @@ The built-ins (`print`, `help`, `len`, …) come from `__builtins__` as usual. T
 
 `TERM` and `COLORTERM` are set with `setdefault`, so they can be overridden beforehand.
 
-> Some libraries check `sys.stdout.isatty()` before emitting colour. Pyodide's console streams are not TTYs, so you may need to force colour, for example with `rich.console.Console(force_terminal=True)` or `FORCE_COLOR=1`.
+> While REPL code runs, Pyodide's console stream wrappers report `isatty() == True`, so libraries that check for a TTY usually emit colour. If one doesn't, force it, for example with `rich.console.Console(force_terminal=True)` or `FORCE_COLOR=1`.
 
 ## Calling the page from Python
 
