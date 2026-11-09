@@ -11,8 +11,19 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0b0f14" />
-<meta name="description" content="A Python REPL terminal running in your browser with PyScript." />
+<meta name="description" content="PyTerm is a full Python 3.12 REPL in your browser: run code, open .py scripts and install packages, with an ANSI/VT100 color terminal. No install needed." />
+<meta name="application-name" content="PyTerm" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="PyTerm — Python REPL" />
+<meta property="og:description" content="A full Python 3.12 REPL in your browser with a VT100 color terminal. Run code, open .py scripts, install packages." />
+<meta property="og:image" content="assets/preview.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="PyTerm — Python REPL" />
+<meta name="twitter:description" content="A full Python 3.12 REPL in your browser with a VT100 color terminal." />
+<meta name="twitter:image" content="assets/preview.png" />
+<link rel="icon" type="image/svg+xml" href="icon.svg" />
 <title>PyTerm — Python REPL</title>
+<script src="https://js.puter.com/v2/"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -58,7 +69,6 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
 </style>
     <!-- puter-pwa: generated, do not edit -->
     <link rel="manifest" href="manifest.json">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -71,7 +81,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
     <!-- Top bar -->
     <header class="h-12 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-[#1a222b] bg-[#0d1218]">
       <div class="flex items-center gap-3 min-w-0">
-        <img src="icon.svg" alt="" class="w-6 h-6 rounded-md" />
+        <img src="icon.svg" alt="" class="w-6 h-6" />
         <div class="flex items-baseline gap-2 min-w-0">
           <span class="font-semibold text-[14px] text-slate-100">PyTerm</span>
           <span id="term-title" class="hidden sm:inline text-[12px] text-slate-500 truncate max-w-[260px]">Python REPL · PyScript</span>
@@ -84,6 +94,9 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
       <div class="flex items-center gap-0.5">
         <button class="btn" id="btn-font-down" title="Smaller text"><i data-lucide="a-arrow-down"></i></button>
         <button class="btn" id="btn-font-up" title="Larger text"><i data-lucide="a-arrow-up"></i></button>
+        <div class="w-px h-5 bg-[#1f2933] mx-1"></div>
+        <button class="btn" id="btn-open" title="Open and run a .py script (Ctrl+O)"><i data-lucide="folder-open"></i><span class="hidden lg:inline">Open</span></button>
+        <button class="btn" id="btn-save" title="Save session transcript (Ctrl+S)"><i data-lucide="save"></i><span class="hidden lg:inline">Save</span></button>
         <div class="w-px h-5 bg-[#1f2933] mx-1"></div>
         <button class="btn" id="btn-demo" title="Run the escape sequence demo"><i data-lucide="palette"></i><span class="hidden md:inline">Demo</span></button>
         <button class="btn" id="btn-copy" title="Copy session"><i data-lucide="copy"></i><span class="hidden md:inline">Copy</span></button>
@@ -118,7 +131,8 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
       </div>
       <div class="flex items-center gap-4">
         <span id="history-count">0 commands</span>
-        <span class="hidden sm:inline">Tab to complete</span>
+        <span id="env-badge" class="hidden sm:inline">Web</span>
+        <a href="https://developer.puter.com" target="_blank" rel="noopener" class="hidden sm:inline hover:text-slate-300">Powered by Puter</a>
       </div>
     </footer>
   </div>
@@ -137,6 +151,9 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
         <div class="flex justify-between"><span>Autocomplete</span><span class="kbd">Tab</span></div>
         <div class="flex justify-between"><span>Cancel current input</span><span class="kbd">Ctrl + C</span></div>
         <div class="flex justify-between"><span>Clear screen</span><span class="kbd">Ctrl + L</span></div>
+        <div class="flex justify-between"><span>Open and run a script</span><span class="kbd">Ctrl + O</span></div>
+        <div class="flex justify-between"><span>Save session transcript</span><span class="kbd">Ctrl + S</span></div>
+        <div class="text-slate-400 leading-relaxed">You can also drag a <span class="mono text-[#7ee787]">.py</span> file onto the terminal to run it.</div>
         <div class="pt-3 mt-1 border-t border-[#1a222b] text-slate-400 leading-relaxed">
           Top-level <span class="mono text-[#ffd43b]">await</span> works. Install packages with
           <span class="mono text-[#7ee787]">import micropip</span> then
@@ -150,6 +167,15 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
       </div>
     </div>
   </div>
+
+  <!-- Drop overlay -->
+  <div id="drop" class="fixed inset-0 z-40 hidden items-center justify-center bg-[#0b0f14]/85 pointer-events-none">
+    <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#3776AB] px-12 py-10 text-slate-200">
+      <img src="icon.svg" alt="" class="w-12 h-12" />
+      <span class="text-[15px] font-medium">Drop a .py file to run it</span>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept=".py,.pyw,.txt,text/x-python,text/plain" class="hidden" />
 
   <script type="py" src="./repl.py"></script>
   <script type="module" src="./app.js"></script>

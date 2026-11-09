@@ -28,7 +28,12 @@ The two sides talk only through functions placed on the global `window` object:
   window.pyterm_reset_buffer()            ───► reset_buffer()
   window.pyterm_restart()                 ───► restart()
   window.pyterm_set_size(cols, rows)      ───► set_size(cols, rows)
+  window.pyterm_stage_file(name, source)  ───► stage_file(name, source)
 ```
+
+### Running scripts
+
+`pyterm_stage_file(name, source)` stores a script. The UI then pushes the line `await __pyterm_run__()`. `__pyterm_run__` compiles the script with `ast.PyCF_ALLOW_TOP_LEVEL_AWAIT`, sets `__file__` and `sys.argv`, and runs it in the REPL namespace, awaiting the result if it is a coroutine. Because it goes through the normal `push()` path, output, tracebacks, `exit()` handling and the busy state all behave exactly as for typed code.
 
 Python functions are wrapped with `pyodide.ffi.create_proxy`, so they stay alive after `repl.py` finishes running. Async Python functions return JavaScript Promises when called from JavaScript.
 

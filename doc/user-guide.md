@@ -114,6 +114,8 @@ ZeroDivisionError: division by zero
 | **Backspace** | Inside a block, deleting leading spaces removes a whole indent level (4 spaces) |
 | **Ctrl + C** | Cancel the current input (prints `KeyboardInterrupt`), unless text is selected, where it copies as usual |
 | **Ctrl + L** | Clear the screen |
+| **Ctrl/Cmd + O** | Open and run a `.py` script |
+| **Ctrl/Cmd + S** | Save the session transcript |
 | **Esc** | Close the shortcuts dialog |
 
 ### Autocompletion
@@ -135,6 +137,8 @@ The last 500 distinct commands are kept for the current browser tab (they surviv
 
 | Button | Action |
 |---|---|
+| **Open** | Pick a `.py` file and run it (Puter Drive inside Puter, the computer's file dialog otherwise). Its variables stay available at the prompt. You can also drag a file onto the window. |
+| **Save** | Save the session transcript as `.txt` (to Puter Drive inside Puter, as a download otherwise) |
 | **A↓ / A↑** | Decrease / increase the terminal font size (10–24 px). The terminal is resized to fit. |
 | **Demo** | Runs `await demo()`: a tour of styles, colours, line drawing, links, `\r` progress bars and cursor movement |
 | **Copy** | Copies the whole session (scrollback and screen) as plain text, without escape codes |
@@ -230,6 +234,10 @@ os.terminal_size(columns=118, lines=36)
 ```
 
 `os.get_terminal_size()` is not available, because there is no real TTY. Use `shutil.get_terminal_size()`.
+
+## Running scripts
+
+Open a `.py` file with **Open**, Ctrl/Cmd+O or drag-and-drop, or inside Puter by double-clicking it. It runs like `python -i script.py`: the output appears in the terminal, and its functions and variables are available at the prompt afterwards. `__file__` and `sys.argv[0]` are set to the file name, and top-level `await` is allowed. See [Puter App & App Center](puter-app-store.md) for the Puter-specific features.
 
 ## Copying output
 

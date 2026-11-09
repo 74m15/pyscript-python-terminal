@@ -38,11 +38,20 @@ const term = new Terminal(output, {
     void screen.offsetWidth;
     screen.classList.add('bell');
   },
-  onTitle: (t) => {
-    $('term-title').textContent = t || 'Python REPL · PyScript';
-    document.title = t ? `${t} — PyTerm` : 'PyTerm — Python REPL';
-  },
+  onTitle: (t) => setTitle(t),
 });
+
+/* ---------- Puter integration ---------- */
+const P = window.puter;
+const inPuter = !!(P && P.env === 'app');
+$('env-badge').textContent = inPuter ? 'Puter app' : 'Web';
+
+function setTitle(t) {
+  $('term-title').textContent = t || 'Python REPL · PyScript';
+  const full = t ? `${t} — PyTerm` : 'PyTerm — Python REPL';
+  document.title = full;
+  if (inPuter) { try { P.ui.setWindowTitle(t ? `PyTerm — ${t}` : 'PyTerm'); } catch {} }
+}
 
 function write(text, kind = 'out') {
   if (!text) return;
@@ -137,6 +146,102 @@ function addHistory(entry) {
   histIndex = history.length;
   updateHistoryCount();
 }
+
+/* ---------- scripts (open / drop / launch with file) ---------- */
+const pendingScripts = [];
+
+async function runScript(name, source) {
+  if (!ready || busy) { pendingScripts.push([name, source]); return; }
+  if (continuing) { try { window.pyterm_reset_buffer(); } catch {} continuing = false; }
+  busy = true;
+  cmd.value = '';
+  showInput(false);
+  setStatus('running');
+  ensureNewline();
+  write(`▶ Running ${name}\n`, 'info');
+  try {
+    window.pyterm_stage_file(name, source);
+    await window.pyterm_push('await __pyterm_run__()');
+  } catch (e) {
+    write(String(e && e.message || e) + '\n', 'err');
+  }
+  ensureNewline();
+  write(`■ ${name} finished — its variables are available at the prompt\n`, 'info');
+  busy = false;
+  setStatus('ready');
+  setPrompt(PS1);
+  showInput(true);
+  if (pendingScripts.length) { const [n, s] = pendingScripts.shift(); runScript(n, s); }
+}
+
+async function openScript() {
+  if (inPuter) {
+    try {
+      const picked = await P.ui.showOpenFilePicker({ accept: ['.py', '.pyw', '.txt'] }).undefinedOnCancel;
+      if (!picked) return;
+      const item = Array.isArray(picked) ? picked[0] : picked;
+      const text = await (await item.read()).text();
+      runScript(item.name, text);
+    } catch (e) {
+      write(`Could not open file: ${e && e.message || e}\n`, 'err');
+    }
+  } else {
+    $('file-input').click();
+  }
+}
+
+$('file-input').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (f) runScript(f.name, await f.text());
+});
+
+function stamp() {
+  const d = new Date(), p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+async function saveTranscript() {
+  const text = term.getText();
+  const name = `pyterm-session-${stamp()}.txt`;
+  if (inPuter) {
+    try {
+      const item = await P.ui.showSaveFilePicker(text, name).undefinedOnCancel;
+      if (item) flashLabel('btn-save', 'Saved');
+    } catch (e) {
+      write(`Could not save: ${e && e.message || e}\n`, 'err');
+    }
+  } else {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flashLabel('btn-save', 'Saved');
+  }
+}
+
+function flashLabel(id, msg) {
+  const label = $(id).querySelector('span');
+  if (!label) return;
+  const old = label.textContent;
+  label.textContent = msg;
+  setTimeout(() => { label.textContent = old; }, 1400);
+}
+
+// Drag & drop
+let dragDepth = 0;
+const drop = $('drop');
+const showDrop = (on) => { drop.classList.toggle('hidden', !on); drop.classList.toggle('flex', on); };
+window.addEventListener('dragenter', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragDepth++; showDrop(true); } });
+window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) showDrop(false); });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragDepth = 0; showDrop(false);
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) runScript(f.name, await f.text());
+});
 
 async function runSource(raw) {
   const lines = raw.split('\n');
@@ -281,6 +386,12 @@ cmd.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearScreen();
     cmd.focus();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    openScript();
+  } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveTranscript();
   } else if (e.key === 'Backspace' && continuing && cmd.selectionStart === cmd.selectionEnd) {
     const pos = cmd.selectionStart;
     const lineStart = cmd.value.lastIndexOf('\n', pos - 1) + 1;
@@ -314,17 +425,18 @@ $('btn-font-down').onclick = () => { fontSize = Math.max(10, fontSize - 1); appl
 $('btn-clear').onclick = () => { clearScreen(); if (ready && !busy) cmd.focus(); };
 $('btn-demo').onclick = () => { if (ready && !busy) runSource('await demo()'); };
 
-$('btn-copy').onclick = async () => {
-  const btn = $('btn-copy');
-  const label = btn.querySelector('span');
+$('btn-open').onclick = () => openScript();
+$('btn-save').onclick = () => saveTranscript();
+
+async function copySession() {
   try {
     await navigator.clipboard.writeText(term.getText());
-    if (label) label.textContent = 'Copied';
-    setTimeout(() => { if (label) label.textContent = 'Copy'; }, 1400);
+    flashLabel('btn-copy', 'Copied');
   } catch {}
-};
+}
+$('btn-copy').onclick = copySession;
 
-$('btn-restart').onclick = () => {
+function restartPython() {
   if (!ready || busy) return;
   try { window.pyterm_restart(); } catch (e) { write(String(e) + '\n', 'err'); return; }
   continuing = false;
@@ -336,7 +448,8 @@ $('btn-restart').onclick = () => {
   fit();
   banner();
   showInput(true);
-};
+}
+$('btn-restart').onclick = restartPython;
 
 const help = $('help');
 const openHelp = () => { help.classList.remove('hidden'); help.classList.add('flex'); };
@@ -359,6 +472,58 @@ const failTimer = setTimeout(() => {
   if (!ready) $('loader-text').textContent = 'Still loading — slow connections can take a minute…';
 }, 30000);
 
+function setupPuterApp() {
+  if (!inPuter) return;
+  const idle = (fn) => () => { if (ready && !busy) fn(); };
+  try {
+    P.ui.setMenubar({
+      items: [
+        { label: 'File', items: [
+          { label: 'Open Script…', action: idle(openScript) },
+          { label: 'Save Transcript…', action: saveTranscript },
+          '-',
+          { label: 'Quit', action: () => P.exit() },
+        ] },
+        { label: 'Edit', items: [
+          { label: 'Copy Session', action: copySession },
+          { label: 'Clear Screen', action: () => { clearScreen(); cmd.focus(); } },
+        ] },
+        { label: 'Python', items: [
+          { label: 'Restart Interpreter', action: idle(restartPython) },
+          { label: 'Run Demo', action: idle(() => runSource('await demo()')) },
+        ] },
+        { label: 'View', items: [
+          { label: 'Larger Text', action: () => $('btn-font-up').click() },
+          { label: 'Smaller Text', action: () => $('btn-font-down').click() },
+        ] },
+        { label: 'Help', items: [
+          { label: 'Keyboard Shortcuts', action: openHelp },
+          { label: 'Python Documentation', action: () => window.open('https://docs.python.org/3.12/', '_blank') },
+        ] },
+      ],
+    });
+  } catch {}
+  try {
+    P.ui.onLaunchedWithItems(async (items) => {
+      for (const item of items || []) {
+        if (item.isDir) continue;
+        try { runScript(item.name, await (await item.read()).text()); }
+        catch (e) { write(`Could not open ${item.name}: ${e && e.message || e}\n`, 'err'); }
+      }
+    });
+  } catch {}
+  try {
+    P.ui.onItemsOpened && P.ui.onItemsOpened(async (items) => {
+      for (const item of items || []) {
+        if (item.isDir) continue;
+        try { runScript(item.name, await (await item.read()).text()); } catch {}
+      }
+    });
+  } catch {}
+  setTitle('');
+}
+setupPuterApp();
+
 window.pyterm_ready = (version) => {
   clearInterval(loadTimer);
   clearTimeout(failTimer);
@@ -371,6 +536,7 @@ window.pyterm_ready = (version) => {
   banner();
   setPrompt(PS1);
   showInput(true);
+  if (pendingScripts.length) { const [n, s] = pendingScripts.shift(); runScript(n, s); }
 };
 
 window.addEventListener('py:error', () => setStatus('error'));

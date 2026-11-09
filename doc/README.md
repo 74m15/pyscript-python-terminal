@@ -16,13 +16,16 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
 4. **[Python Bridge](python-bridge.md)**
    The functions exchanged between JavaScript and Python, `repl.py` internals (console, result printing, exit handling, completion), the REPL namespace and environment variables.
 
-5. **[Customization](customization.md)**
+5. **[Puter App & App Center](puter-app-store.md)**
+   Running as a Puter desktop app (menu bar, Drive pickers, file associations), running scripts, the store listing kit and publishing steps.
+
+6. **[Customization](customization.md)**
    Changing colours, palette, prompts, fonts, scrollback size, result truncation, the banner, preloading packages, and upgrading PyScript.
 
-6. **[Development & Deployment](development.md)**
+7. **[Development & Deployment](development.md)**
    Local setup, project conventions, deployment to static hosts, and a manual test checklist.
 
-7. **[Troubleshooting & FAQ](troubleshooting.md)**
+8. **[Troubleshooting & FAQ](troubleshooting.md)**
    Known limitations, common issues and their fixes, frequently asked questions.
 
 ## At a glance

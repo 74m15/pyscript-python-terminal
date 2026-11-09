@@ -1,6 +1,8 @@
 import sys
 import os
+import ast
 import asyncio
+import inspect
 import js
 from pyodide.console import PyodideConsole
 from pyodide.ffi import create_proxy, to_js
@@ -89,6 +91,33 @@ async def demo():
     return None
 
 
+_staged = {}
+
+
+def stage_file(name, source):
+    """Called from JavaScript: remember a script to run with __pyterm_run__()."""
+    _staged["name"] = str(name)
+    _staged["source"] = str(source)
+
+
+async def _run_staged():
+    """Run the staged script in the REPL namespace (like `python -i script.py`).
+    Top-level await is allowed in scripts."""
+    name = _staged.pop("name", "<script>")
+    source = _staged.pop("source", "")
+    code = compile(source, name, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
+    old_argv = sys.argv
+    sys.argv = [name]
+    namespace["__file__"] = name
+    try:
+        res = eval(code, namespace)
+        if inspect.iscoroutine(res):
+            await res
+    finally:
+        sys.argv = old_argv
+    return None
+
+
 class _Exit:
     def __init__(self, name):
         self.name = name
@@ -108,6 +137,7 @@ def make_console():
         "clear": _clear,
         "cls": _clear,
         "demo": demo,
+        "__pyterm_run__": _run_staged,
         "exit": _Exit("exit"),
         "quit": _Exit("quit"),
     }
@@ -179,4 +209,5 @@ js.window.pyterm_complete = create_proxy(complete)
 js.window.pyterm_reset_buffer = create_proxy(reset_buffer)
 js.window.pyterm_restart = create_proxy(restart)
 js.window.pyterm_set_size = create_proxy(set_size)
+js.window.pyterm_stage_file = create_proxy(stage_file)
 js.window.pyterm_ready(sys.version.split("\n")[0], sys.platform)

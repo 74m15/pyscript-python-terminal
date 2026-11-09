@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <rect width="1200" height="630" fill="#0b0f14"/>
+  <rect x="60" y="60" width="1080" height="510" rx="18" fill="#0d1218" stroke="#1f2933" stroke-width="2"/>
+  <circle cx="98" cy="96" r="8" fill="#ff5f57"/><circle cx="124" cy="96" r="8" fill="#febc2e"/><circle cx="150" cy="96" r="8" fill="#28c840"/>
+  <line x1="60" y1="130" x2="1140" y2="130" stroke="#1a222b" stroke-width="2"/>
+  <g transform="translate(110 200) scale(1.6)">
+    <path fill="#3776AB" d="M63.4 4.8c-30.2 0-28.3 13.1-28.3 13.1l.03 13.6h28.8v4.1H23.7S4.4 33.4 4.4 63.9s16.9 29.4 16.9 29.4h10.1V79.2s-.5-16.9 16.6-16.9h28.6s16 .3 16-15.5V20.7S95 4.8 63.4 4.8zM47.5 13.9a5.2 5.2 0 1 1 0 10.4 5.2 5.2 0 0 1 0-10.4z"/>
+    <path fill="#FFD43B" d="M64.3 123.2c30.2 0 28.3-13.1 28.3-13.1l-.03-13.6H63.8v-4.1H104s19.3 2.2 19.3-28.3-16.9-29.4-16.9-29.4H96.3v14.1s.5 16.9-16.6 16.9H51.1s-16-.3-16 15.5v26.1s-2.4 15.9 29.2 15.9zm15.9-9.1a5.2 5.2 0 1 1 0-10.4 5.2 5.2 0 0 1 0 10.4z"/>
+  </g>
+  <text x="380" y="270" font-family="Helvetica, Arial, sans-serif" font-size="84" font-weight="700" fill="#f0f6fc">PyTerm</text>
+  <text x="380" y="330" font-family="Helvetica, Arial, sans-serif" font-size="32" fill="#9aa7b4">Python 3.12 REPL in your browser</text>
+  <text x="380" y="420" font-family="Menlo, Consolas, monospace" font-size="30" fill="#ffd43b">&gt;&gt;&gt; <tspan fill="#e6edf3">print("Hello, Puter!")</tspan></text>
+  <text x="380" y="462" font-family="Menlo, Consolas, monospace" font-size="30" fill="#d6dde6">Hello, Puter!</text>
+  <text x="380" y="504" font-family="Menlo, Consolas, monospace" font-size="30" fill="#ffd43b">&gt;&gt;&gt; <tspan fill="#ffd43b">█</tspan></text>
+</svg>
