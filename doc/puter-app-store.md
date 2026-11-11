@@ -25,14 +25,16 @@ The status bar shows **Puter app** or **Web**.
 
 | Feature | Puter API | Notes |
 |---|---|---|
-| Menu bar: File / Edit / Python / View / Help | `puter.ui.setMenubar()` | Open Script, Save Transcript, Quit, Copy Session, Clear Screen, Restart Interpreter, Run Demo, Larger/Smaller Text, Keyboard Shortcuts, Python Documentation |
+| Menu bar: File / Edit / Python / Programs / View / Help | `puter.ui.setMenubar()` | Open Script, Upload Files, Save Transcript, Quit, Copy Session, Clear Screen, Stop, Restart Interpreter, Run Demo, the bundled programs, Run a .py file as a program, Larger/Smaller Text, Keyboard Shortcuts, Python Documentation |
 | Window title follows OSC 0/2 titles | `puter.ui.setWindowTitle()` | `print("\x1b]2;My tool\x07")` → window title "PyTerm — My tool" |
 | Open & run `.py` from Puter Drive | `puter.ui.showOpenFilePicker()` | Toolbar **Open**, File → Open Script, or Ctrl/Cmd+O |
 | Save the session transcript to Puter Drive | `puter.ui.showSaveFilePicker()` | Toolbar **Save**, File → Save Transcript, or Ctrl/Cmd+S |
+| Upload files from Puter Drive into Python | `puter.ui.showOpenFilePicker({ multiple: true })` | **Puter Drive** button in the Upload dialog |
+| Save files from Python to Puter Drive | `puter.ui.showSaveFilePicker()` | `download("path")` in Python (folders are zipped) |
 | Double-click a `.py` file / "Open With → PyTerm" | `puter.ui.onLaunchedWithItems()`, `puter.ui.onItemsOpened()` | Each file is run in the REPL (needs a [file association](#file-associations)) |
 | Quit | `puter.exit()` | File → Quit |
 
-PyTerm doesn't need sign-in or any user data. It never calls `puter.kv` or `puter.fs` directly; files are touched only through pickers the user opens.
+PyTerm doesn't need sign-in or any user data. It never calls `puter.kv` or `puter.fs` directly; Drive files are touched only through pickers the user opens. The persistent `~/browser` folder lives in the browser's IndexedDB, not on Puter.
 
 ### Running scripts
 
@@ -41,8 +43,10 @@ Scripts run like `python -i script.py`:
 - The code runs in the REPL namespace, so its variables, functions and imports stay available at the prompt afterwards.
 - `__file__` and `sys.argv[0]` are set to the file name.
 - Top-level `await` is allowed in scripts too.
-- Output, escape sequences and tracebacks behave like code typed at the prompt.
-- Outside Puter, you can also **drag and drop** a `.py` file onto the window.
+- Output, escape sequences and tracebacks behave like code typed at the prompt, and `input()` works.
+- You can also **drag and drop** a `.py` file onto the window.
+
+The **Programs** menu runs interactive programs in their own namespace; see [Custom Programs](custom-programs.md).
 
 ---
 
@@ -71,16 +75,18 @@ Copy these values into the app's settings in the Puter Developer Center.
 > **PyTerm** brings the real Python 3.14 interpreter to Puter, running entirely in your browser with WebAssembly. Nothing to install, no server.
 >
 > • Classic `>>>` REPL with multi-line blocks, auto-indent, history and Tab completion
-> • Top-level `await` and `micropip` to install packages like numpy, pandas or rich
+> • Interactive `input()` and terminal programs, with a Stop button for runaway code
+> • Upload files, folders and ZIP/tar archives; keep files in a folder saved in your browser
+> • Top-level `await`, automatic package loading and `micropip` for numpy, pandas or rich
 > • Open `.py` files from your Puter Drive, or double-click them to run
 > • A VT100/xterm terminal: ANSI colors (16, 256, truecolor), `\r` progress bars, cursor control, line drawing, the alternate screen and clickable links
-> • Save your session transcript to Drive, copy it, adjust the font size, and restart Python at any time
+> • Save your session transcript and files to Drive, adjust the font size, and restart Python at any time
 >
 > Great for learning Python, quick calculations, testing snippets and teaching.
 
 ### Tags
 
-`python`, `repl`, `terminal`, `console`, `pyscript`, `pyodide`, `developer-tools`, `education`, `programming`
+`python`, `repl`, `terminal`, `console`, `pyodide`, `webassembly`, `developer-tools`, `education`, `programming`
 
 ---
 
@@ -128,6 +134,10 @@ Folders are ignored. If several files are opened at once, they run one after ano
 - [ ] Inside `puter.com/app/<name>`: the status bar says **Puter app** and the menu bar appears
 - [ ] File → Open Script runs a `.py` file from Drive
 - [ ] File → Save Transcript writes a `.txt` file to Drive
+- [ ] File → Upload Files → Puter Drive copies a Drive file into Python
+- [ ] `download("some/file")` opens a Save dialog to Drive
+- [ ] Programs → Calculator runs and `exit` returns to the prompt
+- [ ] Python → Stop interrupts `time.sleep(30)`
 - [ ] Double-clicking a `.py` file runs it
 - [ ] `print("\x1b]2;Hello\x07")` changes the window title
 - [ ] File → Quit closes the window

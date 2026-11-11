@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover - outside Pyodide
     _to_js = lambda x: x  # noqa: E731
 
 __all__ = [
-    "App", "run", "input", "ainput", "confirm", "choose", "table", "style",
+    "App", "run", "input", "ainput", "confirm", "choose", "table", "style", "StopProgram",
     "clear", "title", "download", "HOME", "BROWSER_DIR",
     "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "WHITE", "GREY", "BOLD", "DIM", "RESET",
 ]
@@ -44,6 +44,23 @@ BROWSER_DIR = HOME + "/browser"
 
 # Current program context (set by App.run / the PyTerm launcher).
 _context = {"history": None, "completions": None}
+
+
+class StopProgram(BaseException):
+    """Raised inside a program waiting for input when the user presses Stop.
+
+    It derives from BaseException (like SystemExit), so ``except Exception`` and
+    ``except KeyboardInterrupt`` don't swallow it and the program ends.
+    """
+
+
+def _check_status(status):
+    if status == 2:
+        raise EOFError
+    if status == 3:
+        raise KeyboardInterrupt
+    if status == 4:
+        raise StopProgram
 
 # ---------------------------------------------------------------- colours
 RESET = "\x1b[0m"
@@ -121,10 +138,7 @@ def read_line(password=False, completions=None, history=None):
             "Use `await pyterm.ainput()` instead, or open PyTerm in an up-to-date Chrome, Edge or Firefox."
         )
     status, text = int(res[0]), str(res[1])
-    if status == 2:
-        raise EOFError
-    if status == 3:
-        raise KeyboardInterrupt
+    _check_status(status)
     return text
 
 
@@ -143,10 +157,7 @@ async def ainput(prompt="", *, password=False, completions=None, history=None):
     comps = _to_js([str(c) for c in completions]) if completions else None
     res = await _host.input_async(bool(password), comps, history or _context.get("history"))
     status, text = int(res[0]), str(res[1])
-    if status == 2:
-        raise EOFError
-    if status == 3:
-        raise KeyboardInterrupt
+    _check_status(status)
     return text
 
 

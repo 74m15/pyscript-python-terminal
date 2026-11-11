@@ -21,6 +21,7 @@ let interruptBuf = null;
 let stdinCtl = null;
 let stdinData = null;
 let inputWaiter = null;
+const sleepers = new Set(); // pending time.sleep() calls, woken early by Stop
 let persist = false;
 let size = [80, 24];
 let sizeDirty = true;
@@ -121,6 +122,15 @@ const host = {
     return new Promise((resolve) => {
       inputWaiter = resolve;
       self.postMessage(inputRequest(password, completions, history, 'msg'));
+    });
+  },
+  // time.sleep() under JSPI: resolves 0 when done, 1 when interrupted.
+  sleep(ms) {
+    flushOut();
+    return new Promise((resolve) => {
+      const entry = { resolve, t: 0 };
+      entry.t = setTimeout(() => { sleepers.delete(entry); resolve(0); }, Math.max(0, Number(ms) || 0));
+      sleepers.add(entry);
     });
   },
   progress: (done, total, label) => {
@@ -278,6 +288,13 @@ self.onmessage = (e) => {
       return;
     case 'interrupt':
       if (inputWaiter) { const w = inputWaiter; inputWaiter = null; w([3, '']); return; }
+      if (sleepers.size) {
+        // Python is inside time.sleep(): wake it with a KeyboardInterrupt
+        for (const s of sleepers) { clearTimeout(s.t); s.resolve(1); }
+        sleepers.clear();
+        if (interruptBuf) interruptBuf[0] = 0;
+        return;
+      }
       if (api) { try { api.interrupt(); } catch {} }
       return;
     case 'size':

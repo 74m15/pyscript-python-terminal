@@ -13,9 +13,12 @@ Common changes and where to make them. All files are plain source; reload the pa
 - [Cursor appearance](#cursor-appearance)
 - [Bell](#bell)
 - [Adding REPL helpers](#adding-repl-helpers)
+- [Adding programs](#adding-programs)
+- [Upload defaults](#upload-defaults)
+- [Stop timeout](#stop-timeout)
 - [Preloading packages](#preloading-packages)
 - [Running startup code](#running-startup-code)
-- [Upgrading PyScript / Pyodide](#upgrading-pyscript--pyodide)
+- [Upgrading Pyodide](#upgrading-pyodide)
 - [Theme colour and icon](#theme-colour-and-icon)
 
 ---
@@ -97,6 +100,10 @@ Edit `banner()` in `app.js`. Each `write(text, kind)` call adds one coloured seg
 | History entries | `app.js` → `addHistory` (`> 500`) | 500 |
 | Result repr length | `repl.py` → `MAX_REPR` | 8000 |
 | Completion candidates listed | `app.js` → `doComplete` (`slice(0, 300)`) | 300 |
+| stdin buffer for one `input()` line | `engine.js` → `STDIN_BYTES` | 1 MiB |
+| Output batch size / interval | `py-worker.js` → `out()` (`65536`, `12` ms) | 64 KB / 12 ms |
+| Upload size warning | `upload.js` → `BIG` | 200 MB |
+| Tree lines after an upload | `upload.js` → `engine.call('tree', { limit: 40 })` | 40 |
 | OSC payload length | `terminal.js` → `_feed` (`4096`) | 4096 |
 | CSI parameter length | `terminal.js` → `_feed` (`256`) | 256 |
 
@@ -138,31 +145,39 @@ namespace = {
 }
 ```
 
-Helpers are added again after every Restart.
+Helpers are added again after every Restart. Helpers meant for programs belong in `pyterm_lib.py` (the `pyterm` module) instead.
+
+## Adding programs
+
+Put a `.py` file in `programs/` and list it in `programs/index.json` (`id`, `file`, `title`, `description`). For the Puter menu bar, add a line to the *Programs* menu in `setupPuterApp()` in `app.js`. Details in [Custom Programs](custom-programs.md#adding-a-program-to-the-programs-menu).
+
+## Upload defaults
+
+In `index.html` (Upload dialog markup):
+
+- Default destination: `<input id="up-dest" … value="Upload">`.
+- Default conflict policy: the first `<option>` of `#up-policy`.
+- *Extract archives* / *Into a folder named after each archive*: the `checked` attribute on `#up-extract` / `#up-subfolder`.
+
+In `upload.js`: `ZIP_BASED` lists extensions that are ZIPs inside but are copied as they are; `ARCHIVE_EXT` lists the archive extensions.
+
+## Stop timeout
+
+When Stop can't interrupt Python, it is restarted after 2.5 s. Change `2500` in `interrupt()` in `app.js`.
 
 ## Preloading packages
 
-To make packages available at startup, add a PyScript config to the `<script type="py">` tag in `index.html`:
+Packages are loaded automatically when an `import` line mentions them. To have some ready before the first prompt, load them in `init()` in `py-worker.js`, just before `runPython(repl, …)`:
 
-```html
-<script type="py" src="./repl.py" config='{"packages": ["numpy", "rich"]}'></script>
-```
-
-Or use a separate `pyscript.toml`:
-
-```toml
-packages = ["numpy", "rich"]
-```
-
-```html
-<script type="py" src="./repl.py" config="./pyscript.toml"></script>
+```js
+await py.loadPackage(['numpy', 'micropip']);
 ```
 
 Preloaded packages make the first load slower.
 
 ## Running startup code
 
-To run Python before the first prompt (imports, settings), run it in the REPL namespace at the end of `make_console()`, so it runs again on every Restart:
+To run Python before the first prompt (imports, settings), run it in the REPL namespace at the end of `make_console()` in `repl.py`, so it runs again on every Restart:
 
 ```python
 def make_console():
@@ -171,25 +186,18 @@ def make_console():
     exec("import math, json, re", namespace)
 ```
 
-## Upgrading PyScript / Pyodide
+## Upgrading Pyodide
 
-Versions are set in `index.html`:
+The version appears in two places:
 
-```html
-<link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
-<script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
-...
-<script type="py" src="./repl.py"
-        config='{"interpreter": "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs"}'></script>
-```
+- `py-worker.js`: `import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs';`
+- `index.html`: the `<link rel="modulepreload" …>` hint.
 
-- **PyScript:** change both release numbers. The latest release is listed at `https://pyscript.net/version.json`.
-- **Pyodide:** change the version in the `interpreter` URL. It must be a full URL to `pyodide.mjs`, because a bare version number is resolved as a relative path and fails to load. The latest version is on npm (`pyodide`) and on the Pyodide changelog. Removing the `interpreter` key uses the default bundled with the PyScript release.
+The latest version is on npm (`pyodide`) and in the Pyodide changelog. After upgrading, check:
 
-Then check:
-
-- `pyodide.console.PyodideConsole` still has `push`, `complete`, `buffer` and an async `runcode(source, code)`. `SafeConsole` overrides `runcode`.
-- The future returned by `push` still has `syntax_check` and `formatted_error`.
+- `pyodide.console.PyodideConsole` still has `push`, `complete`, `buffer` and an async `runcode(source, code)`; the future from `push` still has `syntax_check` and `formatted_error`.
+- `pyodide.ffi.run_sync` / `can_run_sync` (stack switching) and `setInterruptBuffer` still exist.
+- `FS.filesystems.IDBFS` and `FS.syncfs` are still exported (used for `~/browser`).
 
 ## Theme colour and icon
 

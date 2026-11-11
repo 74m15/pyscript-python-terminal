@@ -5,6 +5,8 @@ This guide explains how to use PyTerm as an end user.
 - [Starting up](#starting-up)
 - [The screen](#the-screen)
 - [Typing Python](#typing-python)
+- [input() and interactive programs](#input-and-interactive-programs)
+- [Stopping running code](#stopping-running-code)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Toolbar](#toolbar)
 - [Built-in helpers](#built-in-helpers)
@@ -21,20 +23,21 @@ This guide explains how to use PyTerm as an end user.
 When the page opens, the status pill next to the app name reads **Starting** (pulsing amber), and the terminal shows a loading message:
 
 1. *Downloading the Python runtime…*
-2. *Compiling WebAssembly…*
+2. *Opening your browser folder…*
 3. *Loading the standard library…*
-4. *Almost there…*
 
 The first visit downloads about 10 MB. Later visits load from the browser cache and start much faster. If loading takes more than 30 seconds, the message changes to *Still loading — slow connections can take a minute…*.
 
 When Python is ready, the status pill turns **Ready** (green) and the banner appears:
 
 ```
-Python 3.14.x (main, ...) on WebAssembly (Pyodide via PyScript)
+Python 3.14.2 (main, ...) on WebAssembly (Pyodide, background worker)
 Type "help", "copyright", "credits" or "license" for more information.
-VT100/ANSI escape sequences are supported — try await demo(). clear() wipes the screen.
+Try await demo(), the Programs menu, or Upload to add files. ~/browser keeps files after a reload.
 >>>
 ```
+
+Python runs in a background worker, so the page stays responsive while your code runs.
 
 ## The screen
 
@@ -42,7 +45,7 @@ VT100/ANSI escape sequences are supported — try await demo(). clear() wipes th
 |---|---|
 | **Header** | App name, the terminal title (changeable by programs via OSC 0/2), status pill, toolbar buttons |
 | **Terminal** | Program output and the input line |
-| **Status bar** | Python version, encoding (UTF-8), terminal type (VT100 · xterm-256color), size in columns × rows, number of commands in history, a Tab-completion hint |
+| **Status bar** | Python version, worker mode, **~/browser saved** (when the saved folder is active), terminal type, size in columns × rows, number of commands in history, Web / Puter app |
 
 Status pill states:
 
@@ -50,8 +53,12 @@ Status pill states:
 |---|---|
 | Starting (amber, pulsing) | The Python runtime is loading |
 | Ready (green) | Waiting for input |
-| Running (blue, pulsing) | Python is executing your code; input is hidden until it finishes |
-| Failed (red) | PyScript reported a fatal error while starting |
+| Running (blue, pulsing) | Python is executing your code; the **Stop** button appears |
+| Waiting for input (violet, pulsing) | A program called `input()`; type an answer and press Enter |
+| Stopping (amber) | Stop was pressed; Python is being interrupted |
+| Failed (red) | Python could not start |
+
+While a program from the Programs menu runs, its name is added: *Running · calc*.
 
 Output colours used by the app itself:
 
@@ -103,6 +110,36 @@ ZeroDivisionError: division by zero
 
 **Long results.** If a result's `repr()` is longer than 8,000 characters, the middle is replaced by `... [N chars hidden] ...`. Use `print()` to see the full value.
 
+## input() and interactive programs
+
+`input()` works like in a real terminal: the program's prompt appears, you type on the same line, and Python continues when you press **Enter**.
+
+```python
+>>> name = input("What's your name? ")
+What's your name? Ada
+>>> age = int(input("Age? "))
+Age? 36
+>>> f"{name} is {age}"
+'Ada is 36'
+```
+
+- **Ctrl + D** on an empty line sends end-of-file (`EOFError`); **Ctrl + C** raises `KeyboardInterrupt` in the program.
+- `sys.stdin.readline()`, `for line in sys.stdin`, `getpass.getpass()` (typing is hidden) and `cmd.Cmd` all work.
+- ↑ / ↓ recall earlier answers. Each program has its own history, separate from the `>>>` history.
+- Pasting several lines answers several `input()` calls in a row.
+
+The **Programs** menu has ready-made interactive programs (a to-do list, a calculator, a guessing game) and runs any `.py` file as a program. To write your own, see [Custom Programs](custom-programs.md).
+
+> `input()` needs a browser with WebAssembly stack switching (current Chrome, Edge, Firefox) or a cross-origin isolated page. Otherwise the banner shows a note and `await pyterm.ainput("prompt")` can be used instead.
+
+## Stopping running code
+
+Press **Stop** in the toolbar (it appears while code runs) or **Ctrl + C**:
+
+- Code that is waiting — `time.sleep()`, `await asyncio.sleep()`, network requests — stops at once with `KeyboardInterrupt`; your variables are kept.
+- A program waiting for `input()` is ended (Ctrl+C sends it a `KeyboardInterrupt` instead, which it may handle itself).
+- A pure CPU loop (`while True: pass`) stops at once when the page is cross-origin isolated (status bar: *Worker · shared memory*). On normal hosting, PyTerm waits 2.5 seconds and then **restarts Python**: variables and loaded packages are cleared, files in `~/browser` are kept. Pressing Stop again while it says *Stopping* restarts immediately.
+
 ## Keyboard shortcuts
 
 | Keys | Action |
@@ -112,11 +149,13 @@ ZeroDivisionError: division by zero
 | **↑ / ↓** | Previous / next command from history (when the cursor is on the first / last line of the input) |
 | **Tab** | Autocomplete names and attributes; inserts 4 spaces at the start of a line or after whitespace |
 | **Backspace** | Inside a block, deleting leading spaces removes a whole indent level (4 spaces) |
-| **Ctrl + C** | Cancel the current input (prints `KeyboardInterrupt`), unless text is selected, where it copies as usual |
+| **Ctrl + C** | Cancel the current input line, stop running code, or interrupt a program waiting for input (copies instead when text is selected) |
+| **Ctrl + D** | In a program's `input()`: end of input (`EOFError`) |
 | **Ctrl + L** | Clear the screen |
 | **Ctrl/Cmd + O** | Open and run a `.py` script |
+| **Ctrl/Cmd + U** | Upload files, folders or archives |
 | **Ctrl/Cmd + S** | Save the session transcript |
-| **Esc** | Close the shortcuts dialog |
+| **Esc** | Close a dialog |
 
 ### Autocompletion
 
@@ -138,7 +177,10 @@ The last 500 distinct commands are kept for the current browser tab (they surviv
 | Button | Action |
 |---|---|
 | **Open** | Pick a `.py` file and run it (Puter Drive inside Puter, the computer's file dialog otherwise). Its variables stay available at the prompt. You can also drag a file onto the window. |
+| **Upload** | Copy files, folders or archives into Python's file system. See [Files & Upload](files-and-upload.md). |
 | **Save** | Save the session transcript as `.txt` (to Puter Drive inside Puter, as a download otherwise) |
+| **Programs** | Start a bundled interactive program, or run a `.py` file as a program. See [Custom Programs](custom-programs.md). |
+| **Stop** | Shown while code runs: interrupts it (see [Stopping running code](#stopping-running-code)) |
 | **A↓ / A↑** | Decrease / increase the terminal font size (10–24 px). The terminal is resized to fit. |
 | **Demo** | Runs `await demo()`: a tour of styles, colours, line drawing, links, `\r` progress bars and cursor movement |
 | **Copy** | Copies the whole session (scrollback and screen) as plain text, without escape codes |
@@ -156,7 +198,10 @@ These names are predefined in the REPL namespace:
 |---|---|
 | `clear()` / `cls()` | Clear the terminal screen |
 | `demo()` | Coroutine; run with `await demo()` to see escape sequence support |
+| `download(path)` | Send a file (or a folder, zipped) to your computer or Puter Drive |
+| `run(path, *args)` | Run a `.py` file from Python's file system as a program |
 | `exit()` / `quit()` | Reset the interpreter (the page cannot be closed from Python). Typing just `exit` explains this. |
+| `import pyterm` | Helpers for interactive programs ([Custom Programs](custom-programs.md)) |
 | `help`, `copyright`, `credits`, `license` | Standard Python built-ins |
 
 `sys.exit()` and `raise SystemExit` also reset the interpreter and print `Interpreter restarted.`.
@@ -171,7 +216,7 @@ The prompt supports top-level `await`, so you can call coroutines directly:
 one second later
 ```
 
-Python runs on the browser's main thread. Blocking code such as `time.sleep()` or a long CPU-bound loop freezes the page until it finishes, and output appears only at the end. For animations, progress bars and anything that should update live, use `await asyncio.sleep(...)` between updates. That lets the browser repaint.
+Python runs in a background worker, so neither `time.sleep()` nor a long loop freezes the page, and output appears while the code runs. `time.sleep()` and `await asyncio.sleep()` both work for animations and progress bars.
 
 ```python
 >>> async def countdown(n):
@@ -185,7 +230,7 @@ Python runs on the browser's main thread. Blocking code such as `time.sleep()` o
 
 ## Installing packages
 
-Many popular scientific packages are pre-built for Pyodide (numpy, pandas, matplotlib, scipy, scikit-learn, and more), and pure-Python wheels can be installed from PyPI:
+Many popular scientific packages are pre-built for Pyodide (numpy, pandas, matplotlib, scipy, scikit-learn, and more). Just `import` them: PyTerm notices the import and downloads the package first (a grey *Loading numpy…* line appears). Pure-Python wheels can be installed from PyPI:
 
 ```python
 >>> import micropip
@@ -197,7 +242,7 @@ Many popular scientific packages are pre-built for Pyodide (numpy, pandas, matpl
 Notes:
 
 - Packages with C extensions that are not in the Pyodide distribution cannot be installed.
-- Installed packages live in memory and are lost when the page reloads. Restart keeps installed packages but resets your variables.
+- Installed packages live in memory and are lost when the page reloads (or when Stop has to restart Python). The Restart button keeps installed packages but resets your variables.
 - Network access from Python goes through the browser, so normal CORS rules apply (`pyodide.http.pyfetch` is the recommended way to make HTTP requests).
 
 ## Using escape sequences
@@ -237,7 +282,11 @@ os.terminal_size(columns=118, lines=36)
 
 ## Running scripts
 
-Open a `.py` file with **Open**, Ctrl/Cmd+O or drag-and-drop, or inside Puter by double-clicking it. It runs like `python -i script.py`: the output appears in the terminal, and its functions and variables are available at the prompt afterwards. `__file__` and `sys.argv[0]` are set to the file name, and top-level `await` is allowed. See [Puter App & App Center](puter-app-store.md) for the Puter-specific features.
+Open a `.py` file with **Open**, Ctrl/Cmd+O or drag-and-drop, or inside Puter by double-clicking it. It runs like `python -i script.py`: the output appears in the terminal, `input()` works, and its functions and variables are available at the prompt afterwards. `__file__` and `sys.argv[0]` are set to the file name, and top-level `await` is allowed. To run a script in its own clean namespace instead, use **Programs → Run a .py file as a program…** or `run("path/to/file.py")`. See [Puter App & App Center](puter-app-store.md) for the Puter-specific features.
+
+## Files
+
+Your home folder is `/home/pyodide`. Upload files with the **Upload** button, keep files permanently in `~/browser`, and send files back with `download(path)`. Everything is explained in [Files & Upload](files-and-upload.md).
 
 ## Copying output
 

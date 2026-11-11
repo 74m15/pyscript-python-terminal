@@ -1,94 +1,94 @@
 # Python Bridge
 
-This document describes how JavaScript (`app.js`) and Python (`repl.py`) communicate, and how the REPL works internally.
+How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js` / `repl.py`), and how the REPL works inside.
 
 - [Overview](#overview)
-- [Functions exported by Python](#functions-exported-by-python)
-- [Functions exported by JavaScript](#functions-exported-by-javascript)
+- [Messages from the page](#messages-from-the-page)
+- [Messages from the worker](#messages-from-the-worker)
+- [The pyterm_host module](#the-pyterm_host-module)
 - [repl.py internals](#replpy-internals)
+- [Running scripts and programs](#running-scripts-and-programs)
 - [The REPL namespace](#the-repl-namespace)
 - [Environment variables](#environment-variables)
-- [Calling the page from Python](#calling-the-page-from-python)
+- [Calling the browser from Python](#calling-the-browser-from-python)
 
 ---
 
 ## Overview
 
-The two sides talk only through functions placed on the global `window` object:
-
 ```
-          JavaScript (app.js)                         Python (repl.py)
-  ─────────────────────────────────           ─────────────────────────────────
-  window.pyterm_ready(version, platform)  ◄─── called once at the end of boot
-  window.pyterm_write(text, kind)         ◄─── stdout / stderr / results / errors
-  window.pyterm_clear()                   ◄─── clear() / cls()
-
-  await window.pyterm_push(line)          ───► push(line)          → "complete" | "incomplete" | "exit"
-  window.pyterm_complete(source)          ───► complete(source)    → [options[], start]
-  window.pyterm_reset_buffer()            ───► reset_buffer()
-  window.pyterm_restart()                 ───► restart()
-  window.pyterm_set_size(cols, rows)      ───► set_size(cols, rows)
-  window.pyterm_stage_file(name, source)  ───► stage_file(name, source)
+ Page (engine.js)                                   Worker (py-worker.js → repl.py)
+ ─────────────────                                  ───────────────────────────────
+ init {interrupt?, stdin?, cols, rows}  ──────────►  loadPyodide, mount ~/browser, run repl.py
+                                        ◄──────────  status {text} … ready {version, persist, shared, interrupt, jspi}
+ push {id, line}                        ──────────►  push(line)
+                                        ◄──────────  out {text, kind} …  input {…} …
+                                        ◄──────────  result {id, value: "complete" | "incomplete" | "exit"}
+ input_reply {text, status}             ──────────►  (or written to the shared stdin buffer)
+ interrupt                              ──────────►  cancel tasks (+ SIGINT through the shared buffer)
 ```
 
-### Running scripts
+Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `interrupt`, `size` and `flush_fs` bypass the queue.
 
-`pyterm_stage_file(name, source)` stores a script. The UI then pushes the line `await __pyterm_run__()`. `__pyterm_run__` compiles the script with `ast.PyCF_ALLOW_TOP_LEVEL_AWAIT`, sets `__file__` and `sys.argv`, and runs it in the REPL namespace, awaiting the result if it is a coroutine. Because it goes through the normal `push()` path, output, tracebacks, `exit()` handling and the busy state all behave exactly as for typed code.
+## Messages from the page
 
-Python functions are wrapped with `pyodide.ffi.create_proxy`, so they stay alive after `repl.py` finishes running. Async Python functions return JavaScript Promises when called from JavaScript.
+| type | Payload | Answer `value` | Notes |
+|---|---|---|---|
+| `init` | `interrupt` (Uint8Array on a SharedArrayBuffer or null), `stdin` (SharedArrayBuffer or null), `cols`, `rows` | — | Sent once by `start()` |
+| `push` | `line` | `"complete"`, `"incomplete"` or `"exit"` | Loads Pyodide packages the line imports first |
+| `complete` | `source` | `[options[], start]` | `rlcompleter` candidates; `start` is where the completed word begins |
+| `reset_buffer` | — | — | Drops a half-typed block |
+| `restart` | — | — | New console and namespace |
+| `run_file` | `name`, `source`, `isolated` | like `push` | See [Running scripts](#running-scripts-and-programs) |
+| `save` | `path`, `data` (ArrayBuffer, transferred), `policy` | final path or `null` (skipped) | Upload of one file |
+| `extract` | `name`, `data`, `dest`, `policy`, `subfolder` | `{dest, files, skipped, renamed, blocked, kind}` | ZIP / tar extraction |
+| `tree` | `path`, `limit` | — | Prints a coloured tree |
+| `read` | `path` | `{name, data: Uint8Array}` | A file, or a folder as a ZIP |
+| `sync` | — | — | Saves `~/browser` to IndexedDB now |
+| `input_reply` | `text`, `status` | — | Answers a `via:'msg'` input request |
+| `interrupt` | — | — | Ctrl+C / Stop |
+| `size` | `cols`, `rows` | — | Applied before the next request |
+| `flush_fs` | — | — | Save `~/browser` (page hidden or closing) |
 
-## Functions exported by Python
+`status` for input replies: `1` = a line, `2` = EOF (Ctrl+D → `EOFError`), `3` = interrupt (Ctrl+C → `KeyboardInterrupt`), `4` = Stop button (→ `pyterm.StopProgram`, ends the program).
 
-### `pyterm_push(line: str) → Promise<"complete" | "incomplete" | "exit">`
+## Messages from the worker
 
-Feeds **one** line of source to the interactive console.
-
-| Return value | Meaning | What the UI does |
+| type | Payload | Page action |
 |---|---|---|
-| `"incomplete"` | More input is needed (open block, bracket or string) | Shows the `... ` prompt and pre-fills indentation |
-| `"complete"` | The statement ran (or a syntax error was reported) | Shows the `>>> ` prompt |
-| `"exit"` | `exit()`, `quit()`, `sys.exit()` or `SystemExit` was raised; the console has been rebuilt | Prints *Interpreter restarted.* and shows `>>> ` |
+| `status` | `text` | Loader message during boot |
+| `ready` | `version`, `persist`, `shared`, `interrupt`, `jspi` | Remove loader, banner, prompt, badges |
+| `fatal` | `message` | Status **Failed** |
+| `out` | `text`, `kind` (`out`, `err`, `info`, `result`) | Written to the terminal |
+| `clear` | — | Clear the screen |
+| `title` | `text` | Header / window title |
+| `input` | `via` (`msg` or `sab`), `password`, `completions`, `history` | Show the input line for `input()` |
+| `progress` | `done`, `total`, `label` | Archive extraction progress |
+| `download` | `name`, `data`, `mime` | Save picker (Puter) or browser download |
+| `result` | `id`, `value`, `error` | Resolves / rejects `engine.call()` |
 
-The promise resolves only after the code (including any awaited coroutines) has finished.
+### Shared memory layout (cross-origin isolated pages only)
 
-### `pyterm_complete(source: str) → [string[], number]`
+- **Interrupt buffer**: `Uint8Array(1)` passed to `pyodide.setInterruptBuffer()`. Writing `2` raises `KeyboardInterrupt` at the next bytecode check.
+- **Stdin buffer**: `SharedArrayBuffer(8 + 1 MiB)`. `Int32Array[0]` is the status (0 = waiting), `Int32Array[1]` the byte length, then UTF-8 data. The worker waits with `Atomics.wait`; the page writes the data, stores the status and calls `Atomics.notify`.
 
-Returns completion candidates for the current input line, using the console's `rlcompleter`-based completer. The second item is the index in `source` where the completed word starts. On failure it returns `[[], source.length]`. The call is synchronous.
+## The pyterm_host module
 
-### `pyterm_reset_buffer()`
+Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.py` and `pyterm.py`:
 
-Throws away any partly typed block (used by Ctrl+C), so the next line starts a new statement.
-
-### `pyterm_restart() → true`
-
-Creates a new console with a new namespace. Imported modules stay cached in `sys.modules` and installed packages stay on the virtual file system, but every user variable is gone.
-
-### `pyterm_set_size(cols: number, rows: number)`
-
-Stores the terminal size in `os.environ["COLUMNS"]` and `os.environ["LINES"]`. Called by `fit()` whenever the size changes.
-
-## Functions exported by JavaScript
-
-### `pyterm_ready(version: str, platform: str)`
-
-Called by Python as the last step of `repl.py`. The UI removes the loader, shows the version in the status bar, prints the banner and shows the first prompt.
-
-### `pyterm_write(text: str, kind: str)`
-
-Sends output to the terminal. `kind` is one of:
-
-| kind | Source | Rendering |
-|---|---|---|
-| `out` | `sys.stdout` | Raw: escape sequences are interpreted using the program's SGR state |
-| `err` | `sys.stderr`, tracebacks, syntax errors | Default colour red |
-| `result` | `repr()` of a non-`None` expression | Default colour blue |
-| `prompt`, `input`, `info`, `accent` | Used by `app.js` itself | See `COLORS` in `app.js` |
-
-Escape sequences are interpreted in **every** kind. For example, `sys.stderr.write("\x1b[1mbold red\x1b[0m")` prints bold red text.
-
-### `pyterm_clear()`
-
-Clears the screen and scrollback (`Terminal.clear()`), then puts the input line back if the REPL is idle.
+| Function | Purpose |
+|---|---|
+| `out(text, kind)` | Write to the terminal (batched) |
+| `flush()` | Send buffered output now |
+| `clear()` | Clear the screen |
+| `title(text)` | Set the title |
+| `can_block()` | True if shared-memory stdin is available |
+| `read_input(password, completions, history)` | Blocking read via `Atomics.wait` → `[status, text]` |
+| `input_async(password, completions, history)` | Promise of `[status, text]` (JSPI / `ainput`) |
+| `sleep(ms)` | Promise used by `time.sleep()` under JSPI; resolves `0`, or `1` when Stop wakes it early (→ `KeyboardInterrupt`) |
+| `progress(done, total, label)` | Progress message |
+| `download(name, data, mime)` | Send bytes to the page |
+| `load_imports(source)` | `pyodide.loadPackagesFromImports(source)` |
 
 ## repl.py internals
 
@@ -99,92 +99,104 @@ class SafeConsole(PyodideConsole):
     async def runcode(self, source, code):
         try:
             return await super().runcode(source, code)
-        except (SystemExit, KeyboardInterrupt) as e:
+        except SystemExit as e:
             raise _ExitRequested(str(e)) from None
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            raise _Interrupted() from None
 ```
 
-`PyodideConsole` runs code as asyncio tasks on Pyodide's WebLoop. If a `SystemExit` escapes such a task, asyncio re-raises it out of the event loop. It never reaches the awaiting code and shows up in the browser as an *unhandled promise rejection*. `SafeConsole` turns `SystemExit` (and `KeyboardInterrupt`) into the ordinary exception `_ExitRequested`, which travels back to `push()` normally.
+asyncio re-raises `SystemExit` and `KeyboardInterrupt` out of the event loop, where nothing could catch them. `SafeConsole` turns them into ordinary exceptions that travel back to `push()`.
 
-### `make_console()`
+### stdin and friends
 
-Builds a new namespace and a `SafeConsole` with:
+| Replaced | With |
+|---|---|
+| `builtins.input` | `pyterm.input(prompt)` → `read_line()` |
+| `sys.stdin` | `_Stdin` (`readline()`, `read()`, `isatty() == True`); used by `cmd.Cmd`, `sys.stdin.readline()`, `for line in sys.stdin` |
+| `getpass.getpass` | Password-mode `pyterm.input` |
+| `time.sleep` | `run_sync(host.sleep(ms))` when possible (Stop wakes it, the worker stays responsive), otherwise `Atomics.wait` in 100 ms slices on isolated pages |
 
-```python
-stdout_callback=lambda s: _write(s, "out")
-stderr_callback=lambda s: _write(s, "err")
-```
-
-Pyodide's console redirects `sys.stdout` / `sys.stderr` while user code runs, so every write goes straight to the terminal.
+`read_line()` prefers **JSPI** (`pyodide.ffi.run_sync`), which suspends Python while the worker's event loop keeps running (so `~/browser` can still be saved). It falls back to **shared-memory blocking**, and otherwise raises a `RuntimeError` that suggests `await pyterm.ainput()`.
 
 ### `push(line)`
 
 ```text
 fut = console.push(line)
-├─ syntax_check == "incomplete"   → return "incomplete"
-├─ syntax_check == "syntax-error" → write formatted_error (err) → return "complete"
+├─ "incomplete"   → return "incomplete"
+├─ "syntax-error" → write formatted_error (err) → "complete"
 └─ await fut
-     ├─ result is not None → namespace["_"] = result; write repr (result)
-     ├─ _ExitRequested     → make_console(); return "exit"
-     └─ other exception    → write fut.formatted_error (err)
-   finally: flush stdout/stderr
+     ├─ result is not None    → namespace["_"] = result; write repr (result)
+     ├─ _ExitRequested        → make_console(); return "exit"
+     ├─ interrupted           → write "KeyboardInterrupt" (err)
+     └─ other exception       → write fut.formatted_error (err)
+   finally: flush output
 return "complete"
 ```
 
-`formatted_error` contains a traceback with Pyodide's internal frames removed, so it looks like CPython's own REPL.
+### `interrupt()`
 
-### `_short_repr(value)`
+On an `interrupt` message the worker first answers a pending input request (status 3) or wakes a pending `time.sleep()`. Otherwise `interrupt()` cancels every pending asyncio task except the `push()` wrappers themselves, so `await` points raise and the console reports `KeyboardInterrupt`. With shared memory, the interrupt buffer also stops computing code.
 
-Returns `repr(value)`. Results longer than `MAX_REPR` (8,000) characters keep the first and last 4,000 characters, with `... [N chars hidden] ...` in between. If `repr()` itself raises, it returns `<repr failed: …>`.
+### Uploads
 
-### `_Exit`
+- `save_upload(path, data, policy)` — relative paths are inside `/home/pyodide`; folders are created; `policy` is `rename` (`name (1).ext`), `overwrite` or `skip`.
+- `extract_upload(name, data, dest, policy, subfolder)` — detects ZIP / tar / tar.gz / tar.bz2 / tar.xz by magic bytes; decodes non-UTF-8 ZIP names as CP437; refuses absolute paths, `..`, symlinks, hard links and devices; drops `__MACOSX` and `.DS_Store`; reports progress every 25 entries.
+- `tree(path, limit)` and `read_for_download(path)`.
 
-Stands in for the `exit` and `quit` built-ins. Calling it raises `_ExitRequested`. Its `repr()` says to use `exit()` or the Restart button.
+See [Files & Upload](files-and-upload.md).
 
-### `demo()`
+## Running scripts and programs
 
-An `async` function that shows text styles, the 16, 256 and truecolor palettes, DEC line drawing, an OSC 8 link, a `\r` progress bar and spinner, and cursor movement, insert, delete and erase. It uses `await asyncio.sleep()` between frames so the browser can repaint.
+`run_file` stages the source with `stage_file(name, source, isolated)` and pushes `await __pyterm_run__()`, so output, tracebacks, `exit()` and the busy state behave like typed code.
+
+| | Script (Open, drag & drop, Puter double-click) | Program (Programs menu, `?program=`) |
+|---|---|---|
+| Namespace | The REPL namespace (like `python -i script.py`) | A fresh `__main__` namespace |
+| `__name__` | `"__main__"` | `"__main__"` |
+| `__file__`, `sys.argv[0]` | file name | file name |
+| Top-level `await` | yes | yes |
+| `sys.exit(n)` | ends the script; non-zero status is reported | same |
+| Afterwards | variables stay available | nothing leaks into the REPL |
+
+`run(path, *args)` (available at the prompt) runs a file from the virtual file system as a program, with `sys.argv = [path, *args]` and its folder added to `sys.path`.
 
 ## The REPL namespace
-
-A fresh namespace contains:
 
 | Name | Value |
 |---|---|
 | `__name__` | `"__main__"` |
-| `__doc__` | `None` |
 | `clear`, `cls` | Clear the terminal |
-| `demo` | The escape sequence demo coroutine function |
-| `exit`, `quit` | `_Exit` instances that reset the interpreter |
-| `_` | Set after the first non-`None` result |
+| `demo` | Escape-sequence demo coroutine (`await demo()`) |
+| `download(path, name=None)` | Send a file or folder (zipped) to your computer / Puter Drive |
+| `run(path, *args)` | Run a `.py` file as a program |
+| `exit`, `quit` | Reset the interpreter |
+| `_` | Last non-`None` result |
 
-The built-ins (`print`, `help`, `len`, …) come from `__builtins__` as usual. The namespace is separate from the module globals of `repl.py`, so user code cannot accidentally overwrite the bridge.
+`import pyterm` gives the helper module described in [Custom Programs](custom-programs.md).
 
 ## Environment variables
 
-| Variable | Value | Purpose |
-|---|---|---|
-| `TERM` | `xterm-256color` | Lets libraries (rich, colorama, click, …) detect colour support |
-| `COLORTERM` | `truecolor` | Advertises 24-bit colour support |
-| `COLUMNS` | current column count | Used by `shutil.get_terminal_size()`, `textwrap`, `argparse` help, rich, … |
-| `LINES` | current row count | Same, for height |
+| Variable | Value |
+|---|---|
+| `HOME` | `/home/pyodide` |
+| `TERM` | `xterm-256color` |
+| `COLORTERM` | `truecolor` |
+| `COLUMNS`, `LINES` | Current terminal size |
 
-`TERM` and `COLORTERM` are set with `setdefault`, so they can be overridden beforehand.
+The current directory at start is `/home/pyodide`.
 
-> While REPL code runs, Pyodide's console stream wrappers report `isatty() == True`, so libraries that check for a TTY usually emit colour. If one doesn't, force it, for example with `rich.console.Console(force_terminal=True)` or `FORCE_COLOR=1`.
+## Calling the browser from Python
 
-## Calling the page from Python
-
-User code can reach the browser through the `js` module:
+Python runs in a **worker**, so `js` refers to the worker's global scope: `fetch`, `crypto`, `indexedDB`, `setTimeout`, `TextEncoder`… are available; `document` and `window` are not.
 
 ```python
->>> import js
->>> js.window.pyterm_write("\x1b[35mdirect write\x1b[0m\n", "out")
->>> js.document.title
-'PyTerm — Python REPL'
 >>> from pyodide.http import pyfetch
 >>> r = await pyfetch("https://api.github.com/zen")
 >>> await r.string()
 'Keep it logically awesome.'
+>>> import js
+>>> js.crypto.randomUUID()
+'0f6c…'
 ```
 
 Network requests follow the browser's CORS rules.

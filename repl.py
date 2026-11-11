@@ -57,7 +57,7 @@ class SafeConsole(PyodideConsole):
             return await super().runcode(source, code)
         except SystemExit as e:
             raise _ExitRequested(str(e)) from None
-        except (KeyboardInterrupt, asyncio.CancelledError):
+        except (KeyboardInterrupt, asyncio.CancelledError, pyterm.StopProgram):
             raise _Interrupted() from None
 
 
@@ -119,34 +119,35 @@ _orig_sleep = time.sleep
 
 
 def _sleep(seconds):
-    """time.sleep that keeps output flowing and works in the worker."""
+    """time.sleep that keeps output flowing, can be stopped, and works in the worker."""
     pyterm._flush()
     seconds = max(0.0, float(seconds))
     try:
         from pyodide.ffi import can_run_sync, run_sync
 
-        if can_run_sync():
-            run_sync(asyncio.sleep(seconds))
-            return
+        jspi = can_run_sync()
     except Exception:
-        pass
+        jspi = False
+    if jspi:
+        # host.sleep resolves with 1 when the user presses Stop / Ctrl+C
+        if int(run_sync(host.sleep(seconds * 1000)) or 0):
+            raise KeyboardInterrupt
+        return
     try:
         import js
 
-        if hasattr(js, "SharedArrayBuffer") and js.crossOriginIsolated:
-            end = time.monotonic() + seconds
-            cell = js.Int32Array.new(js.SharedArrayBuffer.new(4))
-            while True:
-                left = end - time.monotonic()
-                if left <= 0:
-                    return
-                js.Atomics.wait(cell, 0, 0, min(left, 0.1) * 1000)
-                # give Pyodide a chance to deliver Ctrl+C
-                sum(())
-    except KeyboardInterrupt:
-        raise
+        shared = bool(getattr(js, "crossOriginIsolated", False))
     except Exception:
-        pass
+        shared = False
+    if shared:
+        end = time.monotonic() + seconds
+        cell = js.Int32Array.new(js.SharedArrayBuffer.new(4))
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            js.Atomics.wait(cell, 0, 0, min(left, 0.1) * 1000)
+            sum(())  # lets Pyodide deliver Ctrl+C from the interrupt buffer
     _orig_sleep(seconds)
 
 
@@ -185,7 +186,7 @@ async def demo():
         w(f"{E}48;2;{r};{g};{b}m {E}0m")
     w(f"\n\n{E}1mLine drawing (DEC special graphics){E}0m\n")
     w("\x1b(0  lqqqqqqqwqqqqqqqk\n  x       x       x\n  tqqqqqqqnqqqqqqqu\n  mqqqqqqqvqqqqqqqj\x1b(B\n\n")
-    w(f"{E}1mOSC 8 hyperlink:{E}0m \x1b]8;;https://pyscript.net\x07{E}4;34mpyscript.net{E}0m\x1b]8;;\x07\n\n")
+    w(f"{E}1mOSC 8 hyperlink:{E}0m \x1b]8;;https://pyodide.org\x07{E}4;34mpyodide.org{E}0m\x1b]8;;\x07\n\n")
 
     w(f"{E}1mCarriage return (\\r) progress bar{E}0m\n")
     for p in range(0, 101, 2):
@@ -233,6 +234,8 @@ async def _run_staged():
         res = eval(code, ns)
         if inspect.iscoroutine(res):
             await res
+    except pyterm.StopProgram:
+        pass  # Stop pressed while the program waited for input: just end it
     except (SystemExit, _ExitRequested) as e:
         code_ = getattr(e, "code", None) if isinstance(e, SystemExit) else (e.args[0] if e.args else None)
         if code_ not in (None, 0, "None", ""):
@@ -315,7 +318,21 @@ def _short_repr(value):
     return r
 
 
+_outer_tasks = set()
+
+
 async def push(line):
+    """Feed one line to the console (called by the worker)."""
+    task = asyncio.current_task()
+    if task is not None:
+        _outer_tasks.add(task)
+    try:
+        return await _push(line)
+    finally:
+        _outer_tasks.discard(task)
+
+
+async def _push(line):
     fut = console.push(line)
     if fut.syntax_check == "incomplete":
         return "incomplete"
@@ -343,10 +360,12 @@ async def push(line):
 
 
 def interrupt():
-    """Ctrl+C without shared memory: cancel whatever is awaiting."""
+    """Ctrl+C / Stop: cancel whatever user code is awaiting (not the push() wrappers)."""
     try:
-        for t in asyncio.all_tasks():
-            t.cancel()
+        loop = asyncio.get_event_loop()
+        for t in list(asyncio.all_tasks(loop)):
+            if t not in _outer_tasks and not t.done():
+                t.cancel()
     except Exception:
         pass
 

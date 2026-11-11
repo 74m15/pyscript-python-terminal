@@ -3,7 +3,7 @@
   "title": "PyTerm — Python REPL",
   "description": "A full Python 3.14 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.",
   "category": "Developer Tools",
-  "tags": ["python", "repl", "terminal", "console", "pyscript", "pyodide", "developer-tools", "education", "programming"],
+  "tags": ["python", "repl", "terminal", "console", "pyodide", "webassembly", "developer-tools", "education", "programming"],
   "icon": "assets/icon-512.png",
   "iconSvg": "icon.svg",
   "previewImage": "assets/preview.png",

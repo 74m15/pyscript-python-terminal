@@ -2,18 +2,19 @@
 
 <img src="icon.svg" alt="PyTerm logo" width="72" />
 
-> A full Python 3.14 REPL in your browser — run code and .py scripts, install packages, enjoy a real color terminal.
+> A full Python 3.14 REPL in your browser — run code, scripts and interactive terminal programs, upload files, install packages, enjoy a real color terminal.
 
-PyTerm is a terminal-style web application that launches a full **CPython 3.14 interactive interpreter (REPL)** directly in the browser. Python runs on WebAssembly through [PyScript](https://pyscript.net) / [Pyodide](https://pyodide.org). No server, no installation and no account are needed: open the page and start typing Python.
+PyTerm is a terminal-style web application that runs a full **CPython 3.14 interactive interpreter (REPL)** in the browser. Python runs on WebAssembly through [Pyodide](https://pyodide.org) inside a **background worker**, so the page stays responsive, long-running code can be **stopped**, and `input()` really waits for you to type. No server, no installation and no account are needed.
 
 Its output goes through a **VT100 / xterm-compatible terminal emulator** written for the project. Programs can use ANSI colours, cursor movement, `\r` carriage returns (progress bars, spinners), screen and line erasing, scroll regions, line-drawing characters, the alternate screen and more.
 
 ```
-Python 3.14.x (main, ...) on WebAssembly (Pyodide via PyScript)
+Python 3.14.2 (main, ...) on WebAssembly (Pyodide, background worker)
 Type "help", "copyright", "credits" or "license" for more information.
->>> import math
->>> math.sqrt(2)
-1.4142135623730951
+>>> name = input("Your name? ")
+Your name? Ada
+>>> f"Hello, {name}!"
+'Hello, Ada!'
 >>> for p in range(101): print(f"\r{p}%", end="")
 100%
 ```
@@ -23,38 +24,37 @@ Type "help", "copyright", "credits" or "license" for more information.
 ## Features
 
 ### Python REPL
-- Real CPython 3.14 (Pyodide 314.0.7) with the full standard library.
-- Classic `>>>` / `...` prompts, multi-line blocks (`for`, `def`, `class`, `with`, …) with automatic indentation.
-- Expression results echoed with `repr()`, last result stored in `_`.
-- Full tracebacks for errors; syntax errors reported without running the line.
-- **Top-level `await`**: `await asyncio.sleep(1)` works at the prompt.
-- Install pure-Python wheels from PyPI with `micropip`.
-- `exit()` / `quit()` reset the interpreter instead of closing the page.
-- Built-in helpers: `clear()` / `cls()` to wipe the screen, `demo()` to show off the terminal.
+- Real CPython 3.14 (Pyodide 314.0.7) with the full standard library, running in a Web Worker.
+- Classic `>>>` / `...` prompts, multi-line blocks with automatic indentation, results echoed with `repr()` and stored in `_`.
+- **Interactive `input()`**, `sys.stdin.readline()`, `getpass.getpass()` and `cmd.Cmd` loops — Python pauses until you press Enter.
+- **Stop button / Ctrl+C** interrupts running code (`KeyboardInterrupt`). If Python can't be interrupted, it is restarted automatically.
+- **Top-level `await`**, `time.sleep()` that doesn't freeze the page, live output while code runs.
+- Packages imported at the prompt are loaded automatically when Pyodide ships them (numpy, pandas, …); `micropip` installs pure-Python wheels from PyPI.
+- Built-in helpers: `clear()`, `demo()`, `download(path)`, `run(path, *args)`.
+
+### Terminal programs
+- **Programs menu** with ready-made examples: a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`) and a guessing game (plain `input()` loop).
+- Run any `.py` file as a program (fresh namespace, `input()`, Ctrl+D to leave), or link to one with `?program=<id>`.
+- The bundled **`pyterm` module** makes command-line apps easy: commands with help, Tab completion, history, colours, tables, yes/no questions and menus. See [doc/custom-programs.md](doc/custom-programs.md).
+
+### Files
+- **Upload** dialog (Ctrl/Cmd+U or drag & drop): files, whole folders and Puter Drive files, with progress.
+- **ZIP and tar(.gz/.bz2/.xz) archives are extracted** safely (no path traversal, no links), optionally into their own folder.
+- Choose the destination folder and what happens on name conflicts (keep both, replace, skip).
+- **`~/browser` is saved in the browser** (IndexedDB) and is still there after a reload.
+- `download("file-or-folder")` sends files back to your computer or Puter Drive (folders are zipped).
+- See [doc/files-and-upload.md](doc/files-and-upload.md).
 
 ### Terminal
 - VT100 / VT220 / xterm escape sequence emulation (see [doc/terminal-emulator.md](doc/terminal-emulator.md)).
-- `\r` returns the cursor to column 0 so following output overwrites the line.
-- 16-colour, 256-colour and 24-bit truecolor SGR attributes, bold/dim/italic/underline styles (straight, double, curly, dotted, dashed), blink, inverse, hidden, strikethrough, overline.
-- Cursor movement, save/restore, erase in display/line, insert/delete characters and lines, scroll regions, tab stops.
-- Alternate screen buffer (`?1049h`), origin mode, auto-wrap control, insert mode, reverse video.
-- DEC Special Graphics line drawing, double-width / double-height lines, OSC window titles and OSC 8 hyperlinks.
-- Wide (CJK / emoji) and combining characters.
-- Auto-sizing to the window; `COLUMNS` / `LINES` are exported to Python.
-- 5,000-line scrollback.
+- 16-colour, 256-colour and 24-bit truecolor SGR attributes and every common text style.
+- Cursor movement, erasing, insert/delete, scroll regions, tab stops, alternate screen, DEC line drawing, double-width/height lines, OSC titles and OSC 8 hyperlinks, wide and combining characters.
+- Auto-sizing to the window; `COLUMNS` / `LINES` exported to Python; 5,000-line scrollback.
 
 ### Puter desktop app
-- Runs as a native Puter app with a File / Edit / Python / View / Help menu bar.
-- Open and run `.py` scripts from Puter Drive, or double-click `.py` files on the desktop.
-- Save the session transcript to Puter Drive; window title follows OSC titles; File → Quit.
+- Native menu bar: File / Edit / Python / Programs / View / Help.
+- Open and run `.py` scripts from Puter Drive, or double-click `.py` files on the desktop; upload from Drive; save transcripts and downloads to Drive.
 - Ready for the Puter App Center, see [doc/puter-app-store.md](doc/puter-app-store.md).
-
-### App
-- Open & run scripts (Ctrl/Cmd+O or drag-and-drop), save transcript (Ctrl/Cmd+S).
-- Command history (↑ / ↓), Tab completion, Ctrl+C to cancel input, Ctrl+L to clear.
-- Toolbar: font size, escape-sequence demo, copy session as plain text, clear, keyboard shortcuts, restart Python.
-- Status indicator (Starting / Ready / Running / Failed), Python version and terminal size in the status bar.
-- Responsive layout for desktop and mobile.
 
 ---
 
@@ -69,9 +69,9 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-> The page must be served over HTTP(S). Opening `index.html` directly via `file://` will not work, because the browser blocks ES modules and the fetch of `repl.py`.
+> The page must be served over HTTP(S). Opening `index.html` via `file://` does not work, because module workers and the fetch of `repl.py` need HTTP.
 
-The first load downloads the Python runtime (about 10 MB, then cached by the browser), which can take a few seconds.
+The first load downloads the Python runtime (about 10 MB, then cached by the browser).
 
 ---
 
@@ -79,14 +79,18 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 
 ```
 .
-├── index.html        # Page layout, styles, PyScript bootstrap, shortcuts dialog
-├── app.js            # UI controller: input line, history, completion, toolbar, sizing
+├── index.html        # Page layout, styles, dialogs (shortcuts, upload)
+├── app.js            # UI controller: input line, input() prompts, history, completion, toolbar, programs menu
+├── engine.js         # PythonEngine: starts the worker, request/response protocol, input replies, Stop
+├── py-worker.js      # Web Worker: loads Pyodide, output batching, stdin, interrupts, ~/browser persistence
+├── repl.py           # Python side: interactive console, input()/stdin, scripts, uploads, archives, demo()
+├── pyterm_lib.py     # The `pyterm` module available to user programs
+├── upload.js         # Upload dialog: pickers, drag & drop, archive detection, progress
 ├── terminal.js       # VT100/xterm terminal emulator (parser, screen buffers, renderer)
-├── repl.py           # Python side: interactive console, output bridge, demo()
+├── programs/         # Programs menu: index.json + todo.py, calc.py, guess.py
 ├── icon.svg          # Application icon (Python logo)
 ├── puter-app.json    # Puter App Center listing metadata
 ├── assets/           # icon-512.png (store icon), preview.png / preview.svg (social image)
-├── README.md         # This file
 └── doc/              # Full documentation
 ```
 
@@ -97,12 +101,14 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 | Document | Contents |
 |---|---|
 | [doc/README.md](doc/README.md) | Documentation index |
-| [doc/user-guide.md](doc/user-guide.md) | Using the REPL: prompts, shortcuts, toolbar, packages, examples |
+| [doc/user-guide.md](doc/user-guide.md) | Using the REPL: prompts, input(), Stop, shortcuts, toolbar, packages, examples |
+| [doc/custom-programs.md](doc/custom-programs.md) | Writing interactive terminal programs and adding them to the Programs menu |
+| [doc/files-and-upload.md](doc/files-and-upload.md) | Upload dialog, archives, conflict handling, `~/browser`, downloads |
 | [doc/architecture.md](doc/architecture.md) | How the pieces fit together, boot sequence, data flow |
+| [doc/python-bridge.md](doc/python-bridge.md) | The page ↔ worker protocol and `repl.py` internals |
 | [doc/terminal-emulator.md](doc/terminal-emulator.md) | Complete escape sequence reference for the emulator |
-| [doc/python-bridge.md](doc/python-bridge.md) | The JavaScript ↔ Python interface and `repl.py` internals |
 | [doc/puter-app-store.md](doc/puter-app-store.md) | Puter desktop integration and App Center publishing |
-| [doc/customization.md](doc/customization.md) | Changing colours, prompts, fonts, limits, preloaded packages |
+| [doc/customization.md](doc/customization.md) | Colours, prompts, fonts, limits, preloaded packages, upgrading Pyodide |
 | [doc/development.md](doc/development.md) | Running locally, deploying, manual test checklist |
 | [doc/troubleshooting.md](doc/troubleshooting.md) | Known limitations, common problems and FAQ |
 
@@ -110,7 +116,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 
 ## Tech stack
 
-- [PyScript 2026.7.3](https://pyscript.net) running [Pyodide 314.0.7](https://pyodide.org) (CPython 3.14.2)
+- [Pyodide 314.0.7](https://pyodide.org) (CPython 3.14.2 on WebAssembly) in a module Web Worker
 - Vanilla JavaScript ES modules (no framework, no bundler)
 - [Puter.js](https://developer.puter.com) for desktop integration (menu bar, Drive file pickers, file associations)
 - [Tailwind CSS](https://tailwindcss.com) (Play CDN) for layout
@@ -119,7 +125,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 
 ## Browser support
 
-Recent versions of Chrome, Edge, Firefox and Safari (desktop and mobile). WebAssembly and ES modules are required.
+Recent Chrome, Edge, Firefox and Safari (desktop and mobile). Interactive `input()` needs either WebAssembly stack switching (JSPI: current Chrome/Edge, Firefox) or a cross-origin isolated page; otherwise `await pyterm.ainput()` works everywhere.
 
 ## License
 

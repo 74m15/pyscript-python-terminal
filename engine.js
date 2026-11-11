@@ -73,13 +73,14 @@ export class PythonEngine {
   call(type, payload = {}, transfer = []) {
     if (!this.worker) return Promise.reject(new Error('Python is not running'));
     const id = this.nextId++;
+    if (this.interrupt && (type === 'push' || type === 'run_file')) this.interrupt[0] = 0;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage({ type, id, ...payload }, transfer);
     });
   }
 
-  /** status: 1 = line, 2 = EOF (Ctrl+D), 3 = KeyboardInterrupt (Ctrl+C) */
+  /** status: 1 = line, 2 = EOF (Ctrl+D), 3 = KeyboardInterrupt (Ctrl+C), 4 = StopProgram (Stop button) */
   reply(text, status = 1) {
     const req = this.inputRequest;
     if (!req || !this.worker) return;

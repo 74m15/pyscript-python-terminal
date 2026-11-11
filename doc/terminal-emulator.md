@@ -363,6 +363,7 @@ const term = new Terminal(rootElement, {
 | `prepareForPrompt()` | Cancel any half-finished escape sequence and, if the cursor isn't at column 0, move to the start of a new line. |
 | `attachInput(el)` | Place element `el` (the input row) in the active buffer at the cursor line and hide that line. |
 | `detachInput()` | Restore the hidden line and stop tracking the input element (it stays where it is; the caller hides it). |
+| `currentLineHTML()` | HTML of the cursor line up to the cursor, with its colours. Used as the prompt for `input()`, so typing continues right after the program's own prompt. |
 | `clear()` | Leave the alternate screen, clear the screen and scrollback, home the cursor. Modes and attributes are kept. |
 | `reset()` | Full reset (RIS) plus `clear()`. |
 | `resize(cols, rows)` | Change the size. Resets the scroll region and tab stops, clamps the cursor, resizes the alternate buffer. |
