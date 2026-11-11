@@ -1,0 +1,22 @@
+{
+  "programs": [
+    {
+      "id": "todo",
+      "file": "todo.py",
+      "title": "To-do list",
+      "description": "A task manager built with cmd.Cmd. Saves to ~/browser, so tasks survive reloads."
+    },
+    {
+      "id": "calc",
+      "file": "calc.py",
+      "title": "Calculator",
+      "description": "A calculator with variables and maths functions, built with the pyterm helper."
+    },
+    {
+      "id": "guess",
+      "file": "guess.py",
+      "title": "Number guessing game",
+      "description": "A plain input()/print() loop — the simplest kind of program."
+    }
+  ]
+}

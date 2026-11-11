@@ -241,6 +241,17 @@ export class Terminal {
     this._schedule();
   }
 
+  // HTML of the cursor line up to the cursor (used as the prompt of an input() line, colours included).
+  currentLineHTML() {
+    const b = this.buf;
+    const ln = b.lines[b.y];
+    if (!ln) return '';
+    const end = b.wrapPending ? ln.c.length : Math.min(b.x, ln.c.length);
+    let html = renderLine({ c: ln.c.slice(0, end), a: ln.a.slice(0, end), size: 0 }, -1);
+    if (!b.wrapPending && b.x > ln.c.length) html += ' '.repeat(b.x - ln.c.length);
+    return html;
+  }
+
   getText() {
     const L = this.normal.lines;
     let out = '';
