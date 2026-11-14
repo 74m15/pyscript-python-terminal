@@ -4,7 +4,7 @@
       "id": "screensaver",
       "file": "screensaver.py",
       "title": "Screen saver",
-      "description": "Bouncing ball, billiards, rotating cube and ASCII art, 15 seconds each. Uses the termgfx and savers libraries.",
+      "description": "Bouncing ball, billiards, rotating cube, ASCII art and Matrix rain, 15 seconds each. Uses the termgfx and savers libraries.",
       "uses": ["termgfx", "savers"]
     },
     {
@@ -20,6 +20,14 @@
       "title": "Calculator",
       "description": "A calculator with variables and maths functions, built with the pyterm helper.",
       "uses": []
+    },
+    {
+      "id": "banner",
+      "file": "banner.py",
+      "title": "Banner maker",
+      "description": "Big ASCII-art text in 500+ fonts. Installs pyfiglet from PyPI on first launch (\"requires\").",
+      "uses": [],
+      "requires": ["pyfiglet"]
     },
     {
       "id": "guess",
@@ -38,7 +46,7 @@
     {
       "name": "savers",
       "description": "The screen saver scenes (imports termgfx)",
-      "files": ["__init__.py", "bouncing.py", "billiards.py", "cube.py", "asciiart.py"]
+      "files": ["__init__.py", "bouncing.py", "billiards.py", "cube.py", "asciiart.py", "matrix.py"]
     }
   ]
 }

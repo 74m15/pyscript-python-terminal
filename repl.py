@@ -267,12 +267,13 @@ class _ProgramPath:
         return False
 
 
-def stage_file(name, source, isolated=False, paths=None):
+def stage_file(name, source, isolated=False, paths=None, requires=None):
     """Called from the worker: remember a script to run with __pyterm_run__()."""
     _staged["name"] = str(name)
     _staged["source"] = str(source)
     _staged["isolated"] = bool(isolated)
     _staged["paths"] = [str(p) for p in paths] if paths else []
+    _staged["requires"] = [str(r) for r in requires] if requires else []
 
 
 async def _run_staged():
@@ -282,6 +283,13 @@ async def _run_staged():
     source = _staged.pop("source", "")
     isolated = _staged.pop("isolated", False)
     paths = _staged.pop("paths", [])
+    requires = _staged.pop("requires", [])
+    if requires:
+        # packages listed in "requires" (programs/index.json) are installed with micropip first
+        label = os.path.splitext(os.path.basename(name))[0]
+        if not await pyterm.ainstall(requires, label=label):
+            _write(f"{os.path.basename(name)} was not started because a required package is missing.\n", "err")
+            return None
     code = compile(source, name, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
     ns = {"__name__": "__main__", "__file__": name, "__builtins__": builtins} if isolated else namespace
     if not isolated:

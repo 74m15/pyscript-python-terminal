@@ -33,8 +33,9 @@ Your name? Ada
 - Built-in helpers: `clear()`, `demo()`, `download(path)`, `run(path, *args)`.
 
 ### Terminal programs
-- **Programs menu** with ready-made examples: a screen saver (bouncing ball, billiards, rotating cube, ASCII art), a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`) and a guessing game (plain `input()` loop).
+- **Programs menu** with ready-made examples: a screen saver (bouncing ball, billiards, rotating cube, ASCII art, Matrix rain), a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`), a banner maker (pyfiglet from PyPI) and a guessing game (plain `input()` loop).
 - **Shared libraries**: folders or ZIP files in `programs/`, declared in `programs/index.json`, are importable by every program (installed in `~/programs` and added to `sys.path` / `PYTHONPATH` while it runs).
+- **`requires`**: programs and libraries can list PyPI packages in `programs/index.json`; PyTerm installs them with micropip before launch, with progress in the terminal (`pyterm.ainstall()` / `pyterm.require()` do the same from code).
 - Run any `.py` file as a program (fresh namespace, `input()`, Ctrl+D to leave), or link to one with `?program=<id>`.
 - The bundled **`pyterm` module** makes command-line apps easy: commands with help, Tab completion, history, colours, tables, yes/no questions and menus. See [doc/custom-programs.md](doc/custom-programs.md).
 

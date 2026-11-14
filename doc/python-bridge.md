@@ -39,7 +39,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `complete` | `source` | `[options[], start]` | `rlcompleter` candidates; `start` is where the completed word begins |
 | `reset_buffer` | — | — | Drops a half-typed block |
 | `restart` | — | — | New console and namespace |
-| `run_file` | `name`, `source`, `isolated`, `paths` (import paths), `extra` (library sources, for package loading) | like `push` | See [Running scripts](#running-scripts-and-programs) |
+| `run_file` | `name`, `source`, `isolated`, `paths` (import paths), `extra` (library sources, for package loading), `requires` (packages to install with micropip first) | like `push` | See [Running scripts](#running-scripts-and-programs) |
 | `write_files` | `files: [{path, data}]` (ArrayBuffers, transferred) | number of files | Installs a program and its libraries in `~/programs` |
 | `save` | `path`, `data` (ArrayBuffer, transferred), `policy` | final path or `null` (skipped) | Upload of one file |
 | `extract` | `name`, `data`, `dest`, `policy`, `subfolder` | `{dest, files, skipped, renamed, blocked, kind}` | ZIP / tar extraction |
@@ -148,7 +148,7 @@ See [Files & Upload](files-and-upload.md).
 
 ## Running scripts and programs
 
-`run_file` stages the source with `stage_file(name, source, isolated)` and pushes `await __pyterm_run__()`, so output, tracebacks, `exit()` and the busy state behave like typed code.
+`run_file` stages the source with `stage_file(name, source, isolated, paths, requires)` and pushes `await __pyterm_run__()`, so output, tracebacks, `exit()` and the busy state behave like typed code. If `requires` is not empty, `__pyterm_run__` first awaits `pyterm.ainstall(requires)` (micropip, with a progress line per package; skipped for packages already installed). If an installation fails the program is not run. Stop during the installation cancels it.
 
 | | Script (Open, drag & drop, Puter double-click) | Program (Programs menu, `?program=`) |
 |---|---|---|

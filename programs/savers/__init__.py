@@ -14,7 +14,8 @@ from .bouncing import BouncingBall
 from .billiards import Billiards
 from .cube import RotatingCube
 from .asciiart import AsciiArt
+from .matrix import MatrixRain
 
-SCENES = [BouncingBall, Billiards, RotatingCube, AsciiArt]
+SCENES = [BouncingBall, Billiards, RotatingCube, AsciiArt, MatrixRain]
 
-__all__ = ["SCENES", "BouncingBall", "Billiards", "RotatingCube", "AsciiArt"]
+__all__ = ["SCENES", "BouncingBall", "Billiards", "RotatingCube", "AsciiArt", "MatrixRain"]

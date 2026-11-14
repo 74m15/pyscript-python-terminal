@@ -239,6 +239,20 @@ Many popular scientific packages are pre-built for Pyodide (numpy, pandas, matpl
 >>> print("[bold magenta]Hello[/] from [green]rich[/]!")
 ```
 
+The `pyterm` helper does the same with a progress line per package, and skips packages already installed:
+
+```python
+>>> import pyterm
+>>> await pyterm.ainstall("rich", "pyfiglet")
+Installing 2 packages with micropip…
+  ✔ rich 13.9.4  2.1s
+  ✔ pyfiglet 1.0.2  0.9s
+Ready in 3.0s.
+True
+```
+
+Programs in the **Programs** menu can declare their packages in `programs/index.json` (`"requires": ["pyfiglet"]`), and PyTerm installs them before starting the program. Try **Programs → Banner maker**. See [Custom Programs](custom-programs.md#packages-from-pypi-requires).
+
 Notes:
 
 - Packages with C extensions that are not in the Pyodide distribution cannot be installed.

@@ -1,4 +1,4 @@
-"""Screen saver — rotates through four animations, 15 seconds each.
+"""Screen saver — rotates through five animations, 15 seconds each.
 
 It shows how programs use libraries: ``termgfx`` (drawing) and ``savers`` (the scenes)
 are folders next to this file in programs/, listed in programs/index.json, and PyTerm
@@ -8,7 +8,7 @@ Press Ctrl+C or the Stop button to leave.
 
 Options (with run("programs/screensaver.py", ...) at the >>> prompt):
     --seconds N        time per scene (default 15)
-    ball billiards cube ascii   only show these scenes, in this order
+    ball billiards cube ascii matrix   only show these scenes, in this order
 """
 import sys
 import time

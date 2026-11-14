@@ -10,6 +10,7 @@ PyTerm can run **interactive terminal programs**: anything that reads what you t
 - [Saving data between visits](#saving-data-between-visits)
 - [Adding a program to the Programs menu](#adding-a-program-to-the-programs-menu)
 - [Shared libraries](#shared-libraries)
+- [Packages from PyPI (`requires`)](#packages-from-pypi-requires)
 - [Tips and limits](#tips-and-limits)
 
 ---
@@ -143,6 +144,15 @@ When the program ends (it returns, calls `sys.exit()`, the user types `exit` or 
 | `pyterm.BROWSER_DIR` | `/home/pyodide/browser` — saved in the browser |
 | `pyterm.download(path, name=None)` | Send a file (or a folder, zipped) to the user's computer / Puter Drive |
 
+### Packages
+
+| Function | Description |
+|---|---|
+| `await pyterm.ainstall(*packages, label=None, quiet=False)` | Install packages with micropip, showing a progress line per package. Already-installed names are skipped. Returns `True` / `False` (the error is printed) |
+| `pyterm.require(*packages, quiet=False)` | Same from ordinary (non-async) code; raises `ImportError` if a package can't be installed. Needs stack switching (JSPI) |
+
+See [Packages from PyPI](#packages-from-pypi-requires).
+
 ### Simple loop
 
 ```python
@@ -228,7 +238,7 @@ Programs in `programs/` can `import` code from **library folders** (packages) or
   ],
   "libraries": [
     { "name": "termgfx", "files": ["__init__.py", "screen.py", "color.py", "math3d.py", "font.py"] },
-    { "name": "savers",  "files": ["__init__.py", "bouncing.py", "billiards.py", "cube.py", "asciiart.py"] },
+    { "name": "savers",  "files": ["__init__.py", "bouncing.py", "billiards.py", "cube.py", "asciiart.py", "matrix.py"] },
     { "name": "mytools", "zip": "mytools.zip" }
   ]
 }
@@ -240,10 +250,12 @@ Programs in `programs/` can `import` code from **library folders** (packages) or
 | `files` | Files of the folder, relative to `programs/<name>/`. Sub-folders are fine (`"db/__init__.py"`, `"data/words.txt"`) |
 | `zip` | A ZIP inside `programs/` (e.g. `"mytools.zip"`). Python imports straight from it; the packages/modules must be at the top level of the ZIP (`mytools/__init__.py` or `helper.py`) |
 | `description` | Optional note |
+| `requires` | Optional PyPI / Pyodide packages the library needs, installed before any program that uses it starts. See [below](#packages-from-pypi-requires) |
 
 | Program field | Meaning |
 |---|---|
 | `uses` | Names of the libraries the program needs. Leave it out to get **all** libraries; use `[]` for none |
+| `requires` | Packages to install with micropip before the program starts, e.g. `["pyfiglet", "rich==13.7.1"]` |
 
 ### What happens when a program starts
 
@@ -251,7 +263,8 @@ Programs in `programs/` can `import` code from **library folders** (packages) or
 2. While the program runs, `sys.path` starts with the program's folder, `~/programs` and every ZIP library, and `PYTHONPATH` is set to the same list. So `import termgfx`, `from savers.cube import RotatingCube` or `import mytools` just work, and libraries can import each other (the `savers` scenes import `termgfx`).
 3. `__file__` is the real path (`/home/pyodide/programs/screensaver.py`), so a program can open data files next to itself.
 4. Pyodide packages imported by the program **or by its libraries** (numpy, …) are loaded first.
-5. When the program ends, `sys.path` and `PYTHONPATH` are restored and the library modules are removed from `sys.modules`. Edit a library, reload the page or just launch the program again, and the new version is used.
+5. Packages listed in `requires` (the libraries' first, then the program's) are installed with micropip, with progress shown in the terminal.
+6. When the program ends, `sys.path` and `PYTHONPATH` are restored and the library modules are removed from `sys.modules`. Edit a library, reload the page or just launch the program again, and the new version is used.
 
 Files are fetched fresh each time a program starts (`cache: no-cache`), so updated libraries on the published site are picked up.
 
@@ -261,7 +274,7 @@ Files are fetched fresh each time a program starts (`cache: no-cache`), so updat
 
 ### The example: Screen saver
 
-`programs/screensaver.py` is a small program that rotates four animations, 15 seconds each: a **bouncing ball** that changes colour, size and symbol at each bounce, a self-playing **billiards** table, a shaded **rotating cube** in a starfield, and **ASCII art** (a character plasma behind a wavy rainbow banner). Ctrl+C or Stop ends it. It is built on two libraries:
+`programs/screensaver.py` is a small program that rotates five animations, 15 seconds each: a **bouncing ball** that changes colour, size and symbol at each bounce, a self-playing **billiards** table, a shaded **rotating cube** in a starfield, **ASCII art** (a character plasma behind a wavy rainbow banner) and **Matrix rain** (green glyph streams at three depths, with a white head, flickering characters and a hidden message that lights up as the streams pass). Ctrl+C or Stop ends it. Scene keys for `run(...)`: `ball`, `billiards`, `cube`, `ascii`, `matrix`. It is built on two libraries:
 
 | Library | Contents |
 |---|---|
@@ -270,6 +283,64 @@ Files are fetched fresh each time a program starts (`cache: no-cache`), so updat
 
 To add a scene: write `programs/savers/myscene.py` with a class following that interface, add it to `SCENES` in `savers/__init__.py`, and add `"myscene.py"` to the `savers` files in `index.json`.
 
+## Packages from PyPI (`requires`)
+
+Pyodide already ships many packages (numpy, pandas, matplotlib, scipy, …): a plain `import` is enough, PyTerm loads them before the program starts. Other packages come from **PyPI** and must be installed with **micropip** before they are imported. Declare them with `requires` and PyTerm does it for you:
+
+```json
+{
+  "id": "banner",
+  "file": "banner.py",
+  "title": "Banner maker",
+  "description": "Big ASCII-art text in 500+ fonts.",
+  "uses": [],
+  "requires": ["pyfiglet"]
+}
+```
+
+```python
+import pyfiglet          # banner.py: just import it
+print(pyfiglet.figlet_format("Hello"))
+```
+
+When the program is launched, the terminal shows:
+
+```
+▶ Starting banner — type exit or press Ctrl+D to come back to Python
+Installing 1 package for banner with micropip…
+  ⠹ ━━━━━━━━━━━━━━━━━━ 1/1  pyfiglet  0.8s      ← animated while downloading
+  ✔ pyfiglet 1.0.2  1.4s
+Ready in 1.4s.
+```
+
+- **Entries** can be names (`"pyfiglet"`), version specifiers (`"rich==13.7.1"`, `"tabulate>=0.9"`), Pyodide packages (`"numpy"`) or wheel URLs. A string instead of a list is accepted for a single package.
+- **Libraries** can have `requires` too; their packages are installed first, for every program that uses the library.
+- **Already installed** packages are skipped instantly, so only the first launch waits. Installed packages stay until the page is reloaded or Python is hard-restarted.
+- **Errors**: if a package can't be installed (no internet, not on PyPI, or it has C code that wasn't built for Pyodide), the error is printed and the program is **not started**.
+- **Stop** during the installation cancels it and returns to the prompt.
+- Only **pure-Python** wheels (`py3-none-any`) and packages built for Pyodide can be installed. Dependencies are resolved automatically.
+
+### Installing from code
+
+For programs run with **Open**, drag & drop or `run(...)` (which don't read `index.json`), or to install something only when needed, use the same installer from Python:
+
+```python
+import pyterm
+
+await pyterm.ainstall("pyfiglet", "tabulate")   # top-level await is allowed in programs
+import pyfiglet
+
+def later():
+    pyterm.require("rich")                        # from ordinary code (needs stack switching)
+    import rich
+```
+
+Or call micropip directly: `import micropip; await micropip.install("pyfiglet")`.
+
+### The example: Banner maker
+
+`programs/banner.py` (menu: **Banner maker**) declares `"requires": ["pyfiglet"]`. Type any text to get it as big ASCII art; `font <name>`, `fonts [prefix]`, `color <name>`, `sample <text>` and `save <text>` (writes `~/browser/banner.txt` and downloads it).
+
 ## Tips and limits
 
 - **Interactive `input()` needs** WebAssembly stack switching (JSPI: current Chrome, Edge and Firefox) or a cross-origin isolated page. Otherwise it raises an error that points to `await pyterm.ainput()` / `await app.arun()`, which work everywhere.
@@ -277,4 +348,5 @@ To add a scene: write `programs/savers/myscene.py` with a class following that i
 - `curses`, `prompt_toolkit`, `textual` and other full-screen frameworks that need raw key presses don't work: input is line-based.
 - `time.sleep()` works and output appears while the program runs.
 - Programs can't start subprocesses or real threads.
+- Packages from PyPI: list them in `requires` (see above) or install them with `pyterm.ainstall()`. C-extension packages work only if Pyodide ships them.
 - Animations: draw a frame, then `time.sleep()` a little. The sleep lets output reach the screen and lets Stop work instantly.

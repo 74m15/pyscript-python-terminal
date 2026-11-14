@@ -292,7 +292,7 @@ async function runSource(raw) {
 }
 
 async function runFile(name, source, opts = {}) {
-  const { program = null, isolated = false, files = null, paths = null, extra = [] } = opts;
+  const { program = null, isolated = false, files = null, paths = null, extra = [], requires = [] } = opts;
   if (!ready || busy) { queue.push(() => runFile(name, source, opts)); return; }
   if (continuing) { try { await engine.call('reset_buffer'); } catch {} continuing = false; }
   cmd.value = '';
@@ -303,7 +303,7 @@ async function runFile(name, source, opts = {}) {
   try {
     // install the program and its libraries in ~/programs, then run it with them on sys.path
     if (files && files.length) await engine.call('write_files', { files }, files.map((f) => f.data));
-    await engine.call('run_file', { name, source, isolated, paths, extra });
+    await engine.call('run_file', { name, source, isolated, paths, extra, requires });
   } catch (e) {
     if (!ready) return;
     write(String(e && e.message || e) + '\n', 'err');
@@ -715,7 +715,12 @@ async function prepareProgram(p) {
     return { path: j.path, data: datas[i] };
   });
   files.push({ path: progPath, data: new TextEncoder().encode(src).buffer });
-  return { name: progPath, src, files, paths: [...new Set(paths)], extra };
+  // PyPI / Pyodide packages to install with micropip before the program starts:
+  // the libraries' "requires" first, then the program's own
+  const asList = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []);
+  const requires = [...new Set([...wanted.flatMap((l) => asList(l.requires)), ...asList(p.requires)]
+    .map((r) => String(r).trim()).filter(Boolean))];
+  return { name: progPath, src, files, paths: [...new Set(paths)], extra, requires };
 }
 
 async function launchProgram(id) {
@@ -724,7 +729,7 @@ async function launchProgram(id) {
   if (!p) { write(`No program named ${id}\n`, 'err'); return; }
   try {
     const prep = await prepareProgram(p);
-    runFile(prep.name, prep.src, { program: p.id, isolated: true, files: prep.files, paths: prep.paths, extra: prep.extra });
+    runFile(prep.name, prep.src, { program: p.id, isolated: true, files: prep.files, paths: prep.paths, extra: prep.extra, requires: prep.requires });
   } catch (e) {
     ensureNewlineIfIdle();
     write(`Could not load ${p.title}: ${e && e.message || e}\n`, 'err');

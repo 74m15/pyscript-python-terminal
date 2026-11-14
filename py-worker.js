@@ -254,7 +254,8 @@ async function handle(m) {
             try { await host.load_imports(src); } catch {}
           }
         }
-        api.stage_file(m.name, m.source, !!m.isolated, m.paths && m.paths.length ? m.paths : null);
+        api.stage_file(m.name, m.source, !!m.isolated, m.paths && m.paths.length ? m.paths : null,
+          m.requires && m.requires.length ? m.requires : null);
         value = await api.push('await __pyterm_run__()');
         break;
       }
