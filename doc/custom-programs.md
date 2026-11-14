@@ -9,6 +9,7 @@ PyTerm can run **interactive terminal programs**: anything that reads what you t
 - [Keys inside a program](#keys-inside-a-program)
 - [Saving data between visits](#saving-data-between-visits)
 - [Adding a program to the Programs menu](#adding-a-program-to-the-programs-menu)
+- [Shared libraries](#shared-libraries)
 - [Tips and limits](#tips-and-limits)
 
 ---
@@ -213,12 +214,61 @@ Other folders live in memory only. See [Files & Upload](files-and-upload.md).
    }
    ```
 
-3. Reload. The program appears in the toolbar menu and can be opened with `?program=notes`.
-4. Inside Puter, the menu bar's **Programs** list is defined in `setupPuterApp()` in `app.js`; add a line there too:
+3. Reload. The program appears in the toolbar menu, in Puter's **Programs** menu bar, and can be opened with `?program=notes`.
 
-   ```js
-   { label: 'Notes', action: () => launchProgram('notes') },
-   ```
+## Shared libraries
+
+Programs in `programs/` can `import` code from **library folders** (packages) or **ZIP files** placed in `programs/` too. A web server can't list a folder, so libraries are declared in `programs/index.json`:
+
+```json
+{
+  "programs": [
+    { "id": "screensaver", "file": "screensaver.py", "title": "Screen saver",
+      "description": "…", "uses": ["termgfx", "savers"] }
+  ],
+  "libraries": [
+    { "name": "termgfx", "files": ["__init__.py", "screen.py", "color.py", "math3d.py", "font.py"] },
+    { "name": "savers",  "files": ["__init__.py", "bouncing.py", "billiards.py", "cube.py", "asciiart.py"] },
+    { "name": "mytools", "zip": "mytools.zip" }
+  ]
+}
+```
+
+| Library field | Meaning |
+|---|---|
+| `name` | Library name. With `files`, it is also the folder inside `programs/` |
+| `files` | Files of the folder, relative to `programs/<name>/`. Sub-folders are fine (`"db/__init__.py"`, `"data/words.txt"`) |
+| `zip` | A ZIP inside `programs/` (e.g. `"mytools.zip"`). Python imports straight from it; the packages/modules must be at the top level of the ZIP (`mytools/__init__.py` or `helper.py`) |
+| `description` | Optional note |
+
+| Program field | Meaning |
+|---|---|
+| `uses` | Names of the libraries the program needs. Leave it out to get **all** libraries; use `[]` for none |
+
+### What happens when a program starts
+
+1. PyTerm downloads the program and its libraries and copies them into **`/home/pyodide/programs`**, keeping the same layout as on the site (`~/programs/screensaver.py`, `~/programs/termgfx/screen.py`, `~/programs/mytools.zip`).
+2. While the program runs, `sys.path` starts with the program's folder, `~/programs` and every ZIP library, and `PYTHONPATH` is set to the same list. So `import termgfx`, `from savers.cube import RotatingCube` or `import mytools` just work, and libraries can import each other (the `savers` scenes import `termgfx`).
+3. `__file__` is the real path (`/home/pyodide/programs/screensaver.py`), so a program can open data files next to itself.
+4. Pyodide packages imported by the program **or by its libraries** (numpy, …) are loaded first.
+5. When the program ends, `sys.path` and `PYTHONPATH` are restored and the library modules are removed from `sys.modules`. Edit a library, reload the page or just launch the program again, and the new version is used.
+
+Files are fetched fresh each time a program starts (`cache: no-cache`), so updated libraries on the published site are picked up.
+
+### From the prompt
+
+`run("programs/screensaver.py", "--seconds", "5", "cube")` also puts `~/programs` and its ZIPs on the path, so you can run programs (and test libraries) by hand after launching one from the menu, or after uploading your own into `~/programs`.
+
+### The example: Screen saver
+
+`programs/screensaver.py` is a small program that rotates four animations, 15 seconds each: a **bouncing ball** that changes colour, size and symbol at each bounce, a self-playing **billiards** table, a shaded **rotating cube** in a starfield, and **ASCII art** (a character plasma behind a wavy rainbow banner). Ctrl+C or Stop ends it. It is built on two libraries:
+
+| Library | Contents |
+|---|---|
+| `termgfx` | `Screen` (frame buffer on the alternate screen that sends only changed cells; `put`, `text`, `fill`, `line`, `box`, `present`), colour helpers (`hsv`, `lerp_color`, `scale`), `math3d` (rotations, perspective projection), `font` (5×5 block letters) |
+| `savers` | One module per scene. Each scene has `update(dt, t)`, `draw(screen)`, `title`, `fps`. `savers.SCENES` lists them |
+
+To add a scene: write `programs/savers/myscene.py` with a class following that interface, add it to `SCENES` in `savers/__init__.py`, and add `"myscene.py"` to the `savers` files in `index.json`.
 
 ## Tips and limits
 
@@ -227,3 +277,4 @@ Other folders live in memory only. See [Files & Upload](files-and-upload.md).
 - `curses`, `prompt_toolkit`, `textual` and other full-screen frameworks that need raw key presses don't work: input is line-based.
 - `time.sleep()` works and output appears while the program runs.
 - Programs can't start subprocesses or real threads.
+- Animations: draw a frame, then `time.sleep()` a little. The sleep lets output reach the screen and lets Stop work instantly.

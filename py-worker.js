@@ -22,6 +22,7 @@ let stdinCtl = null;
 let stdinData = null;
 let inputWaiter = null;
 const sleepers = new Set(); // pending time.sleep() calls, woken early by Stop
+let pendingInterrupt = false; // Stop arrived while nothing was waiting: deliver it at the next sleep/input
 let persist = false;
 let size = [80, 24];
 let sizeDirty = true;
@@ -119,6 +120,7 @@ const host = {
   // Promise-based read (used with run_sync / JSPI, and by `await ainput()`).
   input_async(password, completions, history) {
     scheduleSync(0);
+    if (pendingInterrupt) { pendingInterrupt = false; return Promise.resolve([3, '']); }
     return new Promise((resolve) => {
       inputWaiter = resolve;
       self.postMessage(inputRequest(password, completions, history, 'msg'));
@@ -127,6 +129,7 @@ const host = {
   // time.sleep() under JSPI: resolves 0 when done, 1 when interrupted.
   sleep(ms) {
     flushOut();
+    if (pendingInterrupt) { pendingInterrupt = false; return Promise.resolve(1); }
     return new Promise((resolve) => {
       const entry = { resolve, t: 0 };
       entry.t = setTimeout(() => { sleepers.delete(entry); resolve(0); }, Math.max(0, Number(ms) || 0));
@@ -227,6 +230,7 @@ async function handle(m) {
   try {
     if (!api) throw new Error('Python is not available');
     if (sizeDirty) { api.set_size(size[0], size[1]); sizeDirty = false; }
+    if (m.type === 'push' || m.type === 'run_file') pendingInterrupt = false;
     switch (m.type) {
       case 'push':
         if (/\bimport\b/.test(m.line)) {
@@ -243,13 +247,27 @@ async function handle(m) {
       case 'restart':
         api.restart();
         break;
-      case 'run_file':
-        if (/\bimport\b/.test(m.source)) {
-          try { await host.load_imports(m.source); } catch {}
+      case 'run_file': {
+        // load Pyodide packages imported by the program and by its libraries
+        for (const src of [m.source, ...(m.extra || [])]) {
+          if (src && /\bimport\b/.test(src)) {
+            try { await host.load_imports(src); } catch {}
+          }
         }
-        api.stage_file(m.name, m.source, !!m.isolated);
+        api.stage_file(m.name, m.source, !!m.isolated, m.paths && m.paths.length ? m.paths : null);
         value = await api.push('await __pyterm_run__()');
         break;
+      }
+      case 'write_files': {
+        // install program / library files fetched by the page: [{path, data(ArrayBuffer)}]
+        for (const f of m.files || []) {
+          const dir = f.path.slice(0, f.path.lastIndexOf('/'));
+          if (dir) py.FS.mkdirTree(dir);
+          py.FS.writeFile(f.path, new Uint8Array(f.data));
+        }
+        value = (m.files || []).length;
+        break;
+      }
       case 'save':
         value = api.save_upload(m.path, m.data, m.policy || 'rename');
         break;
@@ -295,11 +313,14 @@ self.onmessage = (e) => {
         if (interruptBuf) interruptBuf[0] = 0;
         return;
       }
+      pendingInterrupt = true;
       if (api) { try { api.interrupt(); } catch {} }
       return;
     case 'size':
       size = [m.cols, m.rows];
       sizeDirty = true;
+      // apply right away too, so a running program (e.g. a full-screen animation) sees the new size
+      if (api) { try { api.set_size(m.cols, m.rows); sizeDirty = false; } catch {} }
       return;
     case 'flush_fs':
       syncOut();

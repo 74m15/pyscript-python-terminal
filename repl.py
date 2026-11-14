@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import builtins
+import importlib
 import inspect
 import io
 import os
@@ -18,6 +19,7 @@ from pyodide.ffi import to_js
 
 HOME = "/home/pyodide"
 BROWSER_DIR = HOME + "/browser"
+PROGRAMS_DIR = HOME + "/programs"
 MAX_REPR = 8000
 VERSION = sys.version.split("\n")[0]
 
@@ -211,11 +213,66 @@ async def demo():
 _staged = {}
 
 
-def stage_file(name, source, isolated=False):
+def _forget_modules(paths):
+    """Drop modules imported from `paths` so the next run imports them fresh."""
+    roots = [str(p).rstrip("/") for p in paths if p]
+
+    def inside(f):
+        if not f or f.startswith(HOME + "/.pyterm/"):  # never drop PyTerm's own helper module
+            return False
+        return any(f == r or f.startswith(r + "/") for r in roots)
+
+    for name, mod in list(sys.modules.items()):
+        try:
+            f = getattr(mod, "__file__", None)
+            locs = [str(x) for x in (getattr(mod, "__path__", None) or [])]
+        except Exception:
+            continue
+        if inside(f) or any(inside(x) for x in locs):
+            sys.modules.pop(name, None)
+    for p in paths:
+        sys.path_importer_cache.pop(p, None)
+        try:
+            import zipimport
+
+            zipimport._zip_directory_cache.pop(p, None)
+        except Exception:
+            pass
+    importlib.invalidate_caches()
+
+
+class _ProgramPath:
+    """While a program runs, put its library folders / ZIPs first on sys.path and PYTHONPATH."""
+
+    def __init__(self, paths):
+        self.paths = [str(p) for p in (paths or []) if p]
+
+    def __enter__(self):
+        self.old_path = list(sys.path)
+        self.old_env = os.environ.get("PYTHONPATH")
+        if self.paths:
+            _forget_modules(self.paths)
+            sys.path[:0] = self.paths
+            os.environ["PYTHONPATH"] = os.pathsep.join(self.paths + ([self.old_env] if self.old_env else []))
+        return self
+
+    def __exit__(self, *exc):
+        if self.paths:
+            sys.path[:] = self.old_path
+            if self.old_env is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = self.old_env
+            _forget_modules(self.paths)
+        return False
+
+
+def stage_file(name, source, isolated=False, paths=None):
     """Called from the worker: remember a script to run with __pyterm_run__()."""
     _staged["name"] = str(name)
     _staged["source"] = str(source)
     _staged["isolated"] = bool(isolated)
+    _staged["paths"] = [str(p) for p in paths] if paths else []
 
 
 async def _run_staged():
@@ -224,39 +281,48 @@ async def _run_staged():
     name = _staged.pop("name", "<script>")
     source = _staged.pop("source", "")
     isolated = _staged.pop("isolated", False)
+    paths = _staged.pop("paths", [])
     code = compile(source, name, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
     ns = {"__name__": "__main__", "__file__": name, "__builtins__": builtins} if isolated else namespace
     if not isolated:
         namespace["__file__"] = name
     old_argv = sys.argv
     sys.argv = [name]
-    try:
-        res = eval(code, ns)
-        if inspect.iscoroutine(res):
-            await res
-    except pyterm.StopProgram:
-        pass  # Stop pressed while the program waited for input: just end it
-    except (SystemExit, _ExitRequested) as e:
-        code_ = getattr(e, "code", None) if isinstance(e, SystemExit) else (e.args[0] if e.args else None)
-        if code_ not in (None, 0, "None", ""):
-            _write(f"{name} exited with status {code_}\n", "info")
-    finally:
-        sys.argv = old_argv
-        pyterm.title("")
+    with _ProgramPath(paths):
+        try:
+            res = eval(code, ns)
+            if inspect.iscoroutine(res):
+                await res
+        except pyterm.StopProgram:
+            pass  # Stop pressed while the program waited for input: just end it
+        except (SystemExit, _ExitRequested) as e:
+            code_ = getattr(e, "code", None) if isinstance(e, SystemExit) else (e.args[0] if e.args else None)
+            if code_ not in (None, 0, "None", ""):
+                _write(f"{os.path.basename(name)} exited with status {code_}\n", "info")
+        finally:
+            sys.argv = old_argv
+            pyterm.title("")
     return None
 
 
 def run(path, *args):
     """Run a .py file as a program in a fresh namespace, e.g. run("Upload/app.py", "--verbose").
-    input() works inside it. Relative paths start in /home/pyodide."""
+    input() works inside it. Relative paths start in /home/pyodide. The file's folder,
+    ~/programs and any ZIP libraries in ~/programs are importable while it runs."""
     p = _resolve(path)
     with open(p, encoding="utf-8") as fh:
         source = fh.read()
     code = compile(source, p, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
     ns = {"__name__": "__main__", "__file__": p, "__builtins__": builtins}
-    old_argv, old_path = sys.argv, list(sys.path)
+    paths = [os.path.dirname(p)]
+    if os.path.isdir(PROGRAMS_DIR):
+        if PROGRAMS_DIR not in paths:
+            paths.append(PROGRAMS_DIR)
+        paths += sorted(os.path.join(PROGRAMS_DIR, f) for f in os.listdir(PROGRAMS_DIR) if f.endswith(".zip"))
+    old_argv = sys.argv
     sys.argv = [p, *map(str, args)]
-    sys.path.insert(0, os.path.dirname(p))
+    guard = _ProgramPath(paths)
+    guard.__enter__()
     try:
         res = eval(code, ns)
         if inspect.iscoroutine(res):
@@ -271,7 +337,7 @@ def run(path, *args):
             _write(f"{os.path.basename(p)} exited with status {e.code}\n", "info")
     finally:
         sys.argv = old_argv
-        sys.path[:] = old_path
+        guard.__exit__(None, None, None)
         pyterm.title("")
     return None
 

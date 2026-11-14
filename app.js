@@ -291,8 +291,9 @@ async function runSource(raw) {
   cmd.setSelectionRange(cmd.value.length, cmd.value.length);
 }
 
-async function runFile(name, source, { program = null, isolated = false } = {}) {
-  if (!ready || busy) { queue.push(() => runFile(name, source, { program, isolated })); return; }
+async function runFile(name, source, opts = {}) {
+  const { program = null, isolated = false, files = null, paths = null, extra = [] } = opts;
+  if (!ready || busy) { queue.push(() => runFile(name, source, opts)); return; }
   if (continuing) { try { await engine.call('reset_buffer'); } catch {} continuing = false; }
   cmd.value = '';
   currentProgram = program;
@@ -300,7 +301,9 @@ async function runFile(name, source, { program = null, isolated = false } = {}) 
   ensureNewline();
   write(program ? `▶ Starting ${program} — type exit or press Ctrl+D to come back to Python\n` : `▶ Running ${name}\n`, 'info');
   try {
-    await engine.call('run_file', { name, source, isolated });
+    // install the program and its libraries in ~/programs, then run it with them on sys.path
+    if (files && files.length) await engine.call('write_files', { files }, files.map((f) => f.data));
+    await engine.call('run_file', { name, source, isolated, paths, extra });
   } catch (e) {
     if (!ready) return;
     write(String(e && e.message || e) + '\n', 'err');
@@ -639,14 +642,18 @@ window.addEventListener('drop', async (e) => {
 });
 
 /* ---------- programs ---------- */
+const PROG_HOME = '/home/pyodide/programs';
 let programs = [];
+let libraries = [];
 const progMenu = $('programs-menu');
 
 async function loadPrograms() {
   try {
-    const r = await fetch('programs/index.json');
-    programs = (await r.json()).programs || [];
-  } catch { programs = []; }
+    const r = await fetch('programs/index.json', { cache: 'no-cache' });
+    const data = await r.json();
+    programs = data.programs || [];
+    libraries = data.libraries || [];
+  } catch { programs = []; libraries = []; }
   const list = $('programs-list');
   list.innerHTML = '';
   for (const p of programs) {
@@ -663,14 +670,63 @@ async function loadPrograms() {
 }
 const programsLoaded = loadPrograms();
 
+// "a/../b\c" → "b/c": keeps every path inside programs/
+function cleanRel(p) {
+  return String(p || '').replace(/\\/g, '/').split('/').filter((s) => s && s !== '.' && s !== '..').join('/');
+}
+
+async function fetchBytes(rel) {
+  const r = await fetch(`programs/${rel}`, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`programs/${rel} could not be loaded (${r.status})`);
+  return r.arrayBuffer();
+}
+
+/* Fetch a program and the libraries it uses (folders listed file by file, or ZIPs). */
+async function prepareProgram(p) {
+  const progRel = cleanRel(p.file);
+  const progPath = `${PROG_HOME}/${progRel}`;
+  const progDir = progPath.slice(0, progPath.lastIndexOf('/'));
+  const wanted = Array.isArray(p.uses) ? libraries.filter((l) => p.uses.includes(l.name)) : libraries;
+  if (Array.isArray(p.uses)) {
+    const missing = p.uses.filter((u) => !libraries.some((l) => l.name === u));
+    if (missing.length) throw new Error(`library not listed in programs/index.json: ${missing.join(', ')}`);
+  }
+  const jobs = [];
+  const paths = [progDir, PROG_HOME];
+  for (const lib of wanted) {
+    if (lib.zip) {
+      const rel = cleanRel(lib.zip);
+      jobs.push({ rel, path: `${PROG_HOME}/${rel}`, py: false });
+      paths.push(`${PROG_HOME}/${rel}`);
+    }
+    for (const f of lib.files || []) {
+      const rel = cleanRel(lib.name ? `${lib.name}/${f}` : f);
+      jobs.push({ rel, path: `${PROG_HOME}/${rel}`, py: /\.py$/i.test(rel) });
+    }
+  }
+  const dec = new TextDecoder();
+  const [src, ...datas] = await Promise.all([
+    fetchBytes(progRel).then((b) => dec.decode(b)),
+    ...jobs.map((j) => fetchBytes(j.rel)),
+  ]);
+  const extra = [];
+  const files = jobs.map((j, i) => {
+    if (j.py) extra.push(dec.decode(datas[i]));
+    return { path: j.path, data: datas[i] };
+  });
+  files.push({ path: progPath, data: new TextEncoder().encode(src).buffer });
+  return { name: progPath, src, files, paths: [...new Set(paths)], extra };
+}
+
 async function launchProgram(id) {
   await programsLoaded;
   const p = programs.find((x) => x.id === id);
   if (!p) { write(`No program named ${id}\n`, 'err'); return; }
   try {
-    const src = await (await fetch(`programs/${p.file}`)).text();
-    runFile(p.file, src, { program: p.id, isolated: true });
+    const prep = await prepareProgram(p);
+    runFile(prep.name, prep.src, { program: p.id, isolated: true, files: prep.files, paths: prep.paths, extra: prep.extra });
   } catch (e) {
+    ensureNewlineIfIdle();
     write(`Could not load ${p.title}: ${e && e.message || e}\n`, 'err');
   }
 }
@@ -727,7 +783,7 @@ help.addEventListener('click', (e) => { if (e.target === help) closeHelp(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !help.classList.contains('hidden')) closeHelp(); });
 
 /* ---------- Puter menubar & file associations ---------- */
-function setupPuterApp() {
+function setupMenubar() {
   if (!inPuter) return;
   const idle = (fn) => () => whenIdle(fn);
   try {
@@ -750,9 +806,7 @@ function setupPuterApp() {
           { label: 'Run Demo', action: idle(() => runSource('await demo()')) },
         ] },
         { label: 'Programs', items: [
-          { label: 'To-do list', action: () => launchProgram('todo') },
-          { label: 'Calculator', action: () => launchProgram('calc') },
-          { label: 'Number guessing game', action: () => launchProgram('guess') },
+          ...programs.map((p) => ({ label: p.title, action: () => launchProgram(p.id) })),
           '-',
           { label: 'Run a .py file as a program…', action: () => $('program-input').click() },
         ] },
@@ -767,6 +821,12 @@ function setupPuterApp() {
       ],
     });
   } catch {}
+}
+
+function setupPuterApp() {
+  if (!inPuter) return;
+  setupMenubar();
+  programsLoaded.then(setupMenubar);
   const openItems = async (items) => {
     for (const item of items || []) {
       if (item.isDir) continue;

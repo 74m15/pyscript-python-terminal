@@ -39,7 +39,8 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `complete` | `source` | `[options[], start]` | `rlcompleter` candidates; `start` is where the completed word begins |
 | `reset_buffer` | — | — | Drops a half-typed block |
 | `restart` | — | — | New console and namespace |
-| `run_file` | `name`, `source`, `isolated` | like `push` | See [Running scripts](#running-scripts-and-programs) |
+| `run_file` | `name`, `source`, `isolated`, `paths` (import paths), `extra` (library sources, for package loading) | like `push` | See [Running scripts](#running-scripts-and-programs) |
+| `write_files` | `files: [{path, data}]` (ArrayBuffers, transferred) | number of files | Installs a program and its libraries in `~/programs` |
 | `save` | `path`, `data` (ArrayBuffer, transferred), `policy` | final path or `null` (skipped) | Upload of one file |
 | `extract` | `name`, `data`, `dest`, `policy`, `subfolder` | `{dest, files, skipped, renamed, blocked, kind}` | ZIP / tar extraction |
 | `tree` | `path`, `limit` | — | Prints a coloured tree |

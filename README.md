@@ -33,7 +33,8 @@ Your name? Ada
 - Built-in helpers: `clear()`, `demo()`, `download(path)`, `run(path, *args)`.
 
 ### Terminal programs
-- **Programs menu** with ready-made examples: a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`) and a guessing game (plain `input()` loop).
+- **Programs menu** with ready-made examples: a screen saver (bouncing ball, billiards, rotating cube, ASCII art), a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`) and a guessing game (plain `input()` loop).
+- **Shared libraries**: folders or ZIP files in `programs/`, declared in `programs/index.json`, are importable by every program (installed in `~/programs` and added to `sys.path` / `PYTHONPATH` while it runs).
 - Run any `.py` file as a program (fresh namespace, `input()`, Ctrl+D to leave), or link to one with `?program=<id>`.
 - The bundled **`pyterm` module** makes command-line apps easy: commands with help, Tab completion, history, colours, tables, yes/no questions and menus. See [doc/custom-programs.md](doc/custom-programs.md).
 
@@ -87,7 +88,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 ├── pyterm_lib.py     # The `pyterm` module available to user programs
 ├── upload.js         # Upload dialog: pickers, drag & drop, archive detection, progress
 ├── terminal.js       # VT100/xterm terminal emulator (parser, screen buffers, renderer)
-├── programs/         # Programs menu: index.json + todo.py, calc.py, guess.py
+├── programs/         # Programs menu: index.json, programs (screensaver, todo, calc, guess) and libraries (termgfx/, savers/)
 ├── icon.svg          # Application icon (Python logo)
 ├── puter-app.json    # Puter App Center listing metadata
 ├── assets/           # icon-512.png (store icon), preview.png / preview.svg (social image)
