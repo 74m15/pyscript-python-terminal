@@ -256,6 +256,7 @@ function endBusy() {
   setStatus('ready');
   setPrompt(continuing ? PS2 : PS1);
   showInput(true);
+  flushDeferredLog();
   drainQueue();
 }
 
@@ -606,9 +607,46 @@ function flashLabel(id, msg) {
 }
 
 /* ---------- upload ---------- */
+// Messages produced while code runs (e.g. an upload finished) wait until it ends,
+// so they never break into a program's screen.
+const deferredLog = [];
+function flushDeferredLog() {
+  if (!deferredLog.length || busy || !ready) return;
+  term.detachInput();
+  ensureNewline();
+  for (const [t, k] of deferredLog.splice(0)) write(t, k);
+  term.attachInput(inputRow);
+}
+
+let toastTimer = 0;
+function toast(text, errors) {
+  const el = $('toast');
+  $('toast-text').textContent = text;
+  const err = $('toast-errors');
+  err.textContent = errors && errors.length ? errors.slice(0, 3).join('\n') + (errors.length > 3 ? `\n… ${errors.length - 3} more` : '') : '';
+  err.classList.toggle('hidden', !err.textContent);
+  $('toast-icon').classList.toggle('text-red-400', !!(errors && errors.length));
+  $('toast-icon').classList.toggle('text-emerald-400', !(errors && errors.length));
+  el.classList.remove('hidden');
+  el.classList.add('flex');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, errors && errors.length ? 9000 : 5000);
+}
+function hideToast() {
+  $('toast').classList.add('hidden');
+  $('toast').classList.remove('flex');
+}
+$('toast-close').onclick = hideToast;
+
 const uploader = createUploader({
   engine, inPuter, P,
-  log: (t, k) => { ensureNewlineIfIdle(); write(t, k); },
+  log: (t, k) => {
+    if (busy) { deferredLog.push([t, k]); return; }
+    ensureNewlineIfIdle();
+    write(t, k);
+  },
+  notify: (text, errors) => toast(text, errors),
+  isBusy: () => busy,
   isReady: () => ready,
   onOpen: () => {},
   onClose: () => { if (inputReq || (ready && !busy)) { if (ready && !busy && !inputReq) { ensureNewline(); term.attachInput(inputRow); } cmd.focus({ preventScroll: true }); } },
@@ -876,6 +914,7 @@ function pythonReady(info) {
   showInput(true);
   const param = new URLSearchParams(location.search).get('program');
   if (param && !pythonReady.launched) { pythonReady.launched = true; launchProgram(param); }
+  flushDeferredLog();
   drainQueue();
 }
 

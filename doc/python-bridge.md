@@ -28,7 +28,7 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
  interrupt                              ──────────►  cancel tasks (+ SIGINT through the shared buffer)
 ```
 
-Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `interrupt`, `size` and `flush_fs` bypass the queue.
+Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `interrupt`, `size` and `flush_fs` bypass the queue. The file requests `save`, `extract`, `read` and `sync` bypass it too, so uploads are written while user code runs (they are handled whenever Python yields: `input()`, `time.sleep()`, `await`).
 
 ## Messages from the page
 

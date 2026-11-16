@@ -203,6 +203,17 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
     </div>
   </div>
 
+  <!-- Notice shown when an upload finishes while code is running -->
+  <div id="toast" role="status" aria-live="polite" class="fixed top-14 right-4 z-40 hidden items-start gap-2.5 max-w-sm rounded-xl border border-[#1f2933] bg-[#0f151c] px-3.5 py-3 text-[13px] text-slate-200">
+    <i data-lucide="circle-check" id="toast-icon" class="w-4 h-4 mt-0.5 shrink-0 text-emerald-400"></i>
+    <div class="min-w-0">
+      <div id="toast-text" class="leading-snug break-words"></div>
+      <div id="toast-errors" class="hidden mt-1 text-[12px] text-red-300 whitespace-pre-line break-words"></div>
+      <div class="mt-1 text-[12px] text-slate-500">The files are available to your running code right away.</div>
+    </div>
+    <button type="button" id="toast-close" class="shrink-0 -mr-1 w-6 h-6 rounded-md text-slate-500 hover:text-slate-200 hover:bg-[#161d25]" title="Close">&times;</button>
+  </div>
+
   <!-- Drop overlay -->
   <div id="drop" class="fixed inset-0 z-40 hidden items-center justify-center bg-[#0b0f14]/85 pointer-events-none">
     <div class="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-[#3776AB] px-12 py-10 text-slate-200">

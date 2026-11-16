@@ -79,7 +79,7 @@ export function collectDrop(dt) {
   })();
 }
 
-export function createUploader({ engine, inPuter, P, log, isReady, onOpen, onClose }) {
+export function createUploader({ engine, inPuter, P, log, isReady, isBusy, notify, onOpen, onClose }) {
   const dlg = $('upload');
   let items = [];
   let running = false;
@@ -204,7 +204,8 @@ export function createUploader({ engine, inPuter, P, log, isReady, onOpen, onClo
     const total = queue.reduce((s, i) => s + i.file.size, 0) || 1;
     let done = 0;
     const r = { files: 0, archives: 0, extracted: 0, skipped: 0, renamed: 0, blocked: 0, errors: [] };
-    setProgress(0, 'Waiting for Python…');
+    const busyAtStart = !!(isBusy && isBusy());
+    setProgress(0, busyAtStart ? 'Copying while your code runs…' : 'Waiting for Python…');
     for (let i = 0; i < queue.length; i++) {
       if (cancelled) break;
       const it = queue[i];
@@ -257,11 +258,17 @@ export function createUploader({ engine, inPuter, P, log, isReady, onOpen, onClo
     if (r.blocked) extra.push(`${r.blocked} unsafe archive entr${r.blocked === 1 ? 'y' : 'ies'} ignored`);
     if (cancelled) extra.push('cancelled');
     if (extra.length) msg += ` — ${extra.join(', ')}`;
+    // While code runs, the terminal belongs to it: the summary is shown in a notice
+    // and printed in the terminal once the code has finished (the app defers log()).
+    const busyNow = !!(isBusy && isBusy());
     log(msg + '\n', 'info');
     for (const e of r.errors.slice(0, 10)) log(`  ✗ ${e}\n`, 'err');
+    if (busyNow && notify) notify(msg.replace(/^⬆ /, ''), r.errors.length ? r.errors : null);
     if (r.files || r.extracted) {
-      try { await engine.call('tree', { path: dest, limit: 40 }); } catch {}
-      if (dest.split('/')[0] !== 'browser') log(`Open them in Python with paths like open("${dest}/…"). Use ~/browser to keep files after a reload.\n`, 'info');
+      if (!busyNow) {
+        try { await engine.call('tree', { path: dest, limit: 40 }); } catch {}
+        if (dest.split('/')[0] !== 'browser') log(`Open them in Python with paths like open("${dest}/…"). Use ~/browser to keep files after a reload.\n`, 'info');
+      }
       try { await engine.call('sync'); } catch {}
     }
     items = [];

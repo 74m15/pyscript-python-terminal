@@ -44,6 +44,14 @@ When it's done the terminal shows a summary and the folder tree:
 └── notes.txt 120 B
 ```
 
+### Uploading while code runs
+
+Upload works at any time, also while a program or a long command is running. The files are written at once and the running code can open them straight away, so a program can, for example, wait in `input("File name? ")` while you upload the file it should read.
+
+- The summary appears as a notice in the top-right corner instead of in the terminal, so it doesn't break into the program's output or full-screen display. It is printed in the terminal (without the folder tree) when the code finishes.
+- Python receives the files whenever the code is waiting: `input()`, `time.sleep()`, `await …`, network requests. Code that computes without pausing receives them when it ends; the progress bar waits until then. (On cross-origin isolated hostings, where Python waits with shared memory, a blocking `input()` or `time.sleep()` also delays them; `await` doesn't.)
+- Dropping one `.py` file while code runs queues it to run afterwards, as before. Dropping anything else opens the Upload dialog.
+
 ### Drag & drop shortcut
 
 Dropping **one `.py` file** anywhere runs it (as before). Dropping anything else — several files, a folder, an archive, data files — opens the Upload dialog with those items.

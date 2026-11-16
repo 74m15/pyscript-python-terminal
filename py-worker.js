@@ -326,6 +326,15 @@ self.onmessage = (e) => {
     case 'flush_fs':
       syncOut();
       return;
+    // File operations skip the request queue, so uploads work while user code runs:
+    // the worker gets these messages whenever Python is waiting (input(), time.sleep(),
+    // await …) and writes the files at once. A pure CPU loop delays them until it yields.
+    case 'save':
+    case 'extract':
+    case 'read':
+    case 'sync':
+      initPromise.then(() => handle(m));
+      return;
     default:
       chain = chain.then(() => handle(m));
   }
