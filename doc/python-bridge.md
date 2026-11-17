@@ -6,6 +6,7 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
 - [Messages from the page](#messages-from-the-page)
 - [Messages from the worker](#messages-from-the-worker)
 - [The pyterm_host module](#the-pyterm_host-module)
+- [Requests from Python to the page (`pyterm._bridge`)](#requests-from-python-to-the-page-pyterm_bridge)
 - [repl.py internals](#replpy-internals)
 - [Running scripts and programs](#running-scripts-and-programs)
 - [The REPL namespace](#the-repl-namespace)
@@ -26,16 +27,19 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
                                         ◄──────────  result {id, value: "complete" | "incomplete" | "exit"}
  input_reply {text, status}             ──────────►  (or written to the shared stdin buffer)
  interrupt                              ──────────►  cancel tasks (+ SIGINT through the shared buffer)
+                                        ◄──────────  rpc {rid, name, args}      (pyterm._bridge: sign-in, programs…)
+ rpc_result {rid, json, blobs | error}  ──────────►  resolves the Python await
+                                        ◄──────────  event {name, data}         (one-way notifications)
 ```
 
-Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `interrupt`, `size` and `flush_fs` bypass the queue. The file requests `save`, `extract`, `read` and `sync` bypass it too, so uploads are written while user code runs (they are handled whenever Python yields: `input()`, `time.sleep()`, `await`).
+Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `rpc_result`, `interrupt`, `size` and `flush_fs` bypass the queue. The file requests `save`, `extract`, `read` and `sync` bypass it too, so uploads are written while user code runs (they are handled whenever Python yields: `input()`, `time.sleep()`, `await`).
 
 ## Messages from the page
 
 | type | Payload | Answer `value` | Notes |
 |---|---|---|---|
 | `init` | `interrupt` (Uint8Array on a SharedArrayBuffer or null), `stdin` (SharedArrayBuffer or null), `cols`, `rows` | — | Sent once by `start()` |
-| `push` | `line` | `"complete"`, `"incomplete"` or `"exit"` | Loads Pyodide packages the line imports first |
+| `push` | `line` | `"complete"`, `"incomplete"`, `"exit"` or `"stopped"` | Loads Pyodide packages the line imports first. `"stopped"`: a program with `"onexit": "stop"` ended, the page stops Python |
 | `complete` | `source` | `[options[], start]` | `rlcompleter` candidates; `start` is where the completed word begins |
 | `reset_buffer` | — | — | Drops a half-typed block |
 | `restart` | — | — | New console and namespace |
@@ -47,6 +51,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `read` | `path` | `{name, data: Uint8Array}` | A file, or a folder as a ZIP |
 | `sync` | — | — | Saves `~/browser` to IndexedDB now |
 | `input_reply` | `text`, `status` | — | Answers a `via:'msg'` input request |
+| `rpc_result` | `rid`, then `json` (string) + `blobs` (ArrayBuffers, transferred) or `error: {code, message}` | — | Answers an `rpc` request. Sent with `engine.rpcReply(req, value, blobs, error)` |
 | `interrupt` | — | — | Ctrl+C / Stop |
 | `size` | `cols`, `rows` | — | Applied before the next request |
 | `flush_fs` | — | — | Save `~/browser` (page hidden or closing) |
@@ -67,6 +72,9 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `progress` | `done`, `total`, `label` | Archive extraction progress |
 | `download` | `name`, `data`, `mime` | Save picker (Puter) or browser download |
 | `result` | `id`, `value`, `error` | Resolves / rejects `engine.call()` |
+| `rpc` | `rid`, `name`, `args` (JSON string) | `app.js` runs `rpcHandlers[name]` and answers with `rpc_result` |
+| `rpc_cancel` | `rid` | Stop was pressed while the request was pending: the handler's `AbortSignal` fires (closes the sign-in dialog) |
+| `event` | `name`, `data` (JSON string) | `program` events (`{id, title, state: "start" \| "end", onexit}`) from `run("id")`: status pill and `onexit` handling |
 
 ### Shared memory layout (cross-origin isolated pages only)
 
@@ -75,7 +83,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 
 ## The pyterm_host module
 
-Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.py` and `pyterm.py`:
+Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.py` and the `pyterm` package (installed from `pylib/pyterm/` into `~/.pyterm/pyterm/` at boot):
 
 | Function | Purpose |
 |---|---|
@@ -90,6 +98,42 @@ Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.p
 | `progress(done, total, label)` | Progress message |
 | `download(name, data, mime)` | Send bytes to the page |
 | `load_imports(source)` | `pyodide.loadPackagesFromImports(source)` |
+| `rpc(name, argsJson)` | Promise of `{json, blobs}`: a request to the page (below). Rejects with a JSON `{code, message}` error |
+| `event(name, json)` | One-way notification to the page |
+
+## Requests from Python to the page (`pyterm._bridge`)
+
+Some features need the page: pop-ups and dialogs (sign-in), `fetch` relative to the site (the programs list), the DOM. Python asks for them with a small request/response protocol:
+
+```python
+from pyterm import _bridge
+
+data = await _bridge.acall("programs.list")                       # JSON answer
+info, blobs = await _bridge.acall("programs.fetch", {"query": "calc"}, binary=True)
+data = _bridge.call("sso.status")                                  # sync, needs stack switching
+```
+
+1. `acall(name, args)` flushes output and calls `host.rpc(name, json.dumps(args))`.
+2. The worker posts `{type:'rpc', rid, name, args}` and keeps a pending promise per `rid`.
+3. `engine.js` tags the message with the worker generation and calls `onRpc(m)`; `app.js` (`handleRpc`) looks up `rpcHandlers[name]` and calls it with `(args, {signal})`.
+4. The handler returns a JSON-able value, or `new Binary(value, [ArrayBuffer, …])` for files, or throws an `Error` with a `code`.
+5. `engine.rpcReply()` posts `rpc_result`; the worker resolves the promise; `acall` returns the decoded JSON (and `bytes` blobs with `binary=True`) or raises `BridgeError(code, message)`.
+
+**Stop** while a request is pending: the worker rejects it with code `interrupted` (Python gets `KeyboardInterrupt`) and posts `rpc_cancel`, which aborts the handler's `signal`. A hard restart drops answers meant for the old worker.
+
+| Request | Args | Answer |
+|---|---|---|
+| `programs.list` | — | `[{id, title, description, file, uses, requires, autoplay, onexit}]` |
+| `programs.manifest` | `query` (id, title or file) | manifest `{id, title, description, path, files, paths, requires, onexit, autoplay}` or `null` |
+| `programs.fetch` | `query` | `{files: [path…]}` + one blob per file |
+| `sso.login`, `sso.token`, `sso.logout`, `sso.status`, `sso.configure` | see [Sign-in](sso.md) | token dicts / status |
+
+### Adding a feature
+
+1. **Page**: add a handler to `rpcHandlers` in `app.js` (or a separate module whose handlers are merged in, like `sso.js`): `'mything.do': async (args, { signal }) => { …; return result; }`. Anything that opens a window must run inside a user click — show a dialog and call it from the button's handler, like `ssoInteract`.
+2. **Python**: add `pylib/pyterm/mything.py` with async functions calling `_bridge.acall("mything.do", {...})` and sync twins using `console._await`, then import it in `pylib/pyterm/__init__.py`.
+3. **Worker**: add the file name to `PYTERM_FILES` in `py-worker.js` so it is installed at boot.
+4. Document it here and in [Custom Programs](custom-programs.md#the-pyterm-package).
 
 ## repl.py internals
 
@@ -128,6 +172,7 @@ fut = console.push(line)
 └─ await fut
      ├─ result is not None    → namespace["_"] = result; write repr (result)
      ├─ _ExitRequested        → make_console(); return "exit"
+     ├─ _StopRequested        → return "stopped"  (program with "onexit": "stop" ended)
      ├─ interrupted           → write "KeyboardInterrupt" (err)
      └─ other exception       → write fut.formatted_error (err)
    finally: flush output
@@ -150,7 +195,7 @@ See [Files & Upload](files-and-upload.md).
 
 `run_file` stages the source with `stage_file(name, source, isolated, paths, requires)` and pushes `await __pyterm_run__()`, so output, tracebacks, `exit()` and the busy state behave like typed code. If `requires` is not empty, `__pyterm_run__` first awaits `pyterm.ainstall(requires)` (micropip, with a progress line per package; skipped for packages already installed). If an installation fails the program is not run. Stop during the installation cancels it.
 
-| | Script (Open, drag & drop, Puter double-click) | Program (Programs menu, `?program=`) |
+| | Script (Open, drag & drop, Puter double-click) | Program (Programs menu, `?program=`, autoplay, `run("id")`) |
 |---|---|---|
 | Namespace | The REPL namespace (like `python -i script.py`) | A fresh `__main__` namespace |
 | `__name__` | `"__main__"` | `"__main__"` |
@@ -159,7 +204,11 @@ See [Files & Upload](files-and-upload.md).
 | `sys.exit(n)` | ends the script; non-zero status is reported | same |
 | Afterwards | variables stay available | nothing leaks into the REPL |
 
-`run(path, *args)` (available at the prompt) runs a file from the virtual file system as a program, with `sys.argv = [path, *args]` and its folder added to `sys.path`.
+`run(target, *args)` (available at the prompt and in the REPL namespace):
+
+- **File** (an existing path, or text with `/` or starting with `~`): runs it in a fresh namespace with `sys.argv = [path, *args]`; its folder, `~/programs` and ZIPs in `~/programs` are on `sys.path`.
+- **Program** (anything else): `pyterm.programs.aprepare(target)` (`programs.manifest` + `programs.fetch` requests when files are missing, Pyodide packages, `requires`), then the program file runs with the manifest's `paths`. A `program` event is sent at start and end. With `"onexit": "stop"`, `_StopRequested` (a `BaseException`) is raised after it ends, travels up through any caller and makes `push()` return `"stopped"`.
+- With stack switching the program runs synchronously (`run_sync`); otherwise `run()` returns an awaitable (`await run("calc")`).
 
 ## The REPL namespace
 
@@ -169,11 +218,11 @@ See [Files & Upload](files-and-upload.md).
 | `clear`, `cls` | Clear the terminal |
 | `demo` | Escape-sequence demo coroutine (`await demo()`) |
 | `download(path, name=None)` | Send a file or folder (zipped) to your computer / Puter Drive |
-| `run(path, *args)` | Run a `.py` file as a program |
+| `run(target, *args)` | Run a program by id/title, or a `.py` file, in a fresh namespace |
 | `exit`, `quit` | Reset the interpreter |
 | `_` | Last non-`None` result |
 
-`import pyterm` gives the helper module described in [Custom Programs](custom-programs.md).
+`import pyterm` gives the helper package described in [Custom Programs](custom-programs.md#the-pyterm-package) (`pyterm.console`, `pyterm.packages`, `pyterm.programs`, `pyterm.sso`).
 
 ## Environment variables
 

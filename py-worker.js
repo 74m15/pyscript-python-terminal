@@ -23,6 +23,12 @@ let stdinData = null;
 let inputWaiter = null;
 const sleepers = new Set(); // pending time.sleep() calls, woken early by Stop
 let pendingInterrupt = false; // Stop arrived while nothing was waiting: deliver it at the next sleep/input
+const rpcs = new Map();       // pending requests from Python to the page (pyterm._bridge)
+let rpcSeq = 0;
+const rpcError = (code, message) => new Error(JSON.stringify({ code, message }));
+
+// The pyterm package (pylib/pyterm/*.py) is installed in ~/.pyterm/pyterm
+const PYTERM_FILES = ['__init__.py', 'console.py', 'packages.py', 'programs.py', 'sso.py', '_bridge.py'];
 let persist = false;
 let size = [80, 24];
 let sizeDirty = true;
@@ -144,6 +150,18 @@ const host = {
     const copy = new Uint8Array(data);
     self.postMessage({ type: 'download', name: String(name), data: copy, mime: mime ? String(mime) : '' }, [copy.buffer]);
   },
+  // Request to the page (sign-in, programs list, …): resolves with {json, blobs}.
+  rpc(name, argsJson) {
+    flushOut();
+    if (pendingInterrupt) { pendingInterrupt = false; return Promise.reject(rpcError('interrupted', 'Interrupted')); }
+    const rid = ++rpcSeq;
+    return new Promise((resolve, reject) => {
+      rpcs.set(rid, { resolve, reject });
+      self.postMessage({ type: 'rpc', rid, name: String(name), args: String(argsJson || '{}') });
+    });
+  },
+  // One-way notification to the page (e.g. a program launched with run() has ended).
+  event: (name, json) => { flushOut(); self.postMessage({ type: 'event', name: String(name), data: json ? String(json) : '' }); },
   load_imports: (src) => py.loadPackagesFromImports(String(src), {
     messageCallback: (m) => out(m + '\n', 'info'),
     errorCallback: (m) => out(m + '\n', 'err'),
@@ -183,13 +201,14 @@ async function init(m) {
     self.postMessage({ type: 'status', text: 'Loading the standard library…' });
     py.registerJsModule('pyterm_host', host);
     const base = new URL('./', import.meta.url);
-    const [repl, lib] = await Promise.all(['repl.py', 'pyterm_lib.py'].map(async (f) => {
-      const r = await fetch(new URL(f, base));
+    const sources = ['repl.py', ...PYTERM_FILES.map((f) => `pylib/pyterm/${f}`)];
+    const [repl, ...lib] = await Promise.all(sources.map(async (f) => {
+      const r = await fetch(new URL(f, base), { cache: 'no-cache' });
       if (!r.ok) throw new Error(`Could not load ${f} (${r.status})`);
       return r.text();
     }));
-    py.FS.mkdirTree(HOME + '/.pyterm');
-    py.FS.writeFile(HOME + '/.pyterm/pyterm.py', lib);
+    py.FS.mkdirTree(HOME + '/.pyterm/pyterm');
+    PYTERM_FILES.forEach((f, i) => py.FS.writeFile(`${HOME}/.pyterm/pyterm/${f}`, lib[i]));
 
     const ns = py.toPy({});
     py.runPython(repl, { globals: ns, filename: '<pyterm>' });
@@ -305,8 +324,23 @@ self.onmessage = (e) => {
     case 'input_reply':
       if (inputWaiter) { const w = inputWaiter; inputWaiter = null; w([m.status, m.text || '']); }
       return;
+    case 'rpc_result': {
+      const r = rpcs.get(m.rid);
+      if (!r) return;
+      rpcs.delete(m.rid);
+      if (m.error) r.reject(rpcError(m.error.code || 'error', m.error.message || 'Request failed'));
+      else r.resolve({ json: m.json == null ? 'null' : m.json, blobs: (m.blobs || []).map((b) => new Uint8Array(b)) });
+      return;
+    }
     case 'interrupt':
       if (inputWaiter) { const w = inputWaiter; inputWaiter = null; w([3, '']); return; }
+      if (rpcs.size) {
+        // Python is waiting for the page (e.g. a sign-in dialog): cancel it → KeyboardInterrupt
+        for (const [rid, r] of rpcs) { r.reject(rpcError('interrupted', 'Interrupted')); self.postMessage({ type: 'rpc_cancel', rid }); }
+        rpcs.clear();
+        if (interruptBuf) interruptBuf[0] = 0;
+        return;
+      }
       if (sleepers.size) {
         // Python is inside time.sleep(): wake it with a KeyboardInterrupt
         for (const s of sleepers) { clearTimeout(s.t); s.resolve(1); }

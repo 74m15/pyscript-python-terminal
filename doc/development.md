@@ -43,8 +43,11 @@ After editing a file, reload the page. If an old version keeps loading, do a har
 | `py-worker.js` | JS (module worker) | Loads Pyodide, output, stdin, interrupts, `~/browser` |
 | `upload.js` | JS (ES module) | Upload dialog |
 | `terminal.js` | JS (ES module) | Terminal emulator |
-| `repl.py` | Python 3.14 | Console, stdin, scripts, uploads, archives |
-| `pyterm_lib.py` | Python 3.14 | The `pyterm` module for programs |
+| `repl.py` | Python 3.14 | Console, stdin, scripts, `run()`, uploads, archives |
+| `pylib/pyterm/` | Python 3.14 | The `pyterm` package for programs (console, packages, programs, sso, _bridge) |
+| `sso.js` | JS (ES module) | Google / Microsoft sign-in |
+| `sso.json` | JSON | Sign-in client IDs |
+| `auth/redirect.html` | HTML | Microsoft sign-in pop-up return page |
 | `programs/` | Python + JSON | Programs menu |
 | `icon.svg` | SVG | App icon |
 | `doc/` | Markdown | Documentation |
@@ -55,14 +58,14 @@ See [Architecture](architecture.md) for how the pieces fit together.
 
 - **No build step.** Keep files loadable directly by the browser. Import ES modules by relative path (`./terminal.js`).
 - **Worker protocol.** Every request with an `id` gets exactly one `result`. Add new request types to `handle()` in `py-worker.js` and document them in [Python Bridge](python-bridge.md). Anything that must work while Python runs (like `interrupt`) goes in `self.onmessage` instead of the queue.
-- **Python → page.** Only through the `pyterm_host` module; flush output (`host.flush()`) before messages that must arrive after it.
+- **Python → page.** Only through the `pyterm_host` module; flush output (`host.flush()`) before messages that must arrive after it. Features that need the page go through `pyterm._bridge` requests (`rpcHandlers` in `app.js`).
 - **Terminal emulator.**
   - Parser states: `GROUND`, `ESC`, `ESC_INT`, `CSI`, `OSC`, `STR`.
   - Add new CSI finals in `_csiDispatch`, DEC private modes in `_decMode`, SGR codes in `_sgr`, ESC finals in `_esc`.
   - Mark a line `dirty = true` whenever its cells change, or it won't be redrawn.
   - Create attributes only with `makeAttr()`, which interns them; never mutate an attribute object.
   - Rows passed to helpers like `_setRow` are relative to the screen; `buf.y` is an absolute line index.
-- **Python.** Keep user-facing helpers in the namespace built by `make_console()`, program helpers in `pyterm_lib.py`, and worker-called functions at module level in `repl.py`. Never let `SystemExit` or `KeyboardInterrupt` escape a task (see `SafeConsole`).
+- **Python.** Keep user-facing helpers in the namespace built by `make_console()`, program helpers in the `pyterm` package (`pylib/pyterm/`, one module per area, listed in `PYTERM_FILES`), and worker-called functions at module level in `repl.py`. Never let `SystemExit` or `KeyboardInterrupt` escape a task (see `SafeConsole`).
 - **UI.** Tailwind utility classes for layout; custom CSS in `index.html` only for terminal rendering. Lucide for icons.
 
 ## Debugging tips
@@ -111,6 +114,15 @@ Run through this after making changes:
 - [ ] Programs → Calculator: `2*(3+4)` prints `= 14`; `exit` returns to `>>>`.
 - [ ] Programs → To-do list: `add milk`, reload, tasks still there.
 - [ ] `?program=guess` starts the game on load.
+- [ ] `run("calc")` at the prompt starts the calculator; `run("Calculator")` too; `run("nope")` raises `LookupError`.
+- [ ] A program with `"autoplay": true` starts on load (banner shown after it ends).
+- [ ] A program with `"onexit": "stop"`: when it ends, the status is *Stopped*, only Restart works, and Restart starts Python again (and the autoplay program).
+
+**Sign-in** (with client IDs in `sso.json`)
+- [ ] Programs → Sign-in demo: `status` lists both providers.
+- [ ] `login google` opens the dialog; Continue opens Google's pop-up; `me google` prints the profile.
+- [ ] `login microsoft`, `me microsoft`, `refresh microsoft` (no dialog).
+- [ ] Stop while the dialog is open closes it and raises `KeyboardInterrupt`.
 
 **Files**
 - [ ] Upload two files to `TestUp`: tree printed, `os.listdir("TestUp")` lists them.
@@ -148,7 +160,8 @@ Checklist:
 - Serve over **HTTPS** (needed for the clipboard API and recommended for WebAssembly).
 - Serve `.py` files as plain text (most servers do this by default). `.js` files must use a JavaScript MIME type (`text/javascript`).
 - No special headers are required (see the optional isolation below).
-- `py-worker.js`, `repl.py`, `pyterm_lib.py` and `programs/` must be deployed next to `index.html`.
+- `py-worker.js`, `repl.py`, `pylib/`, `sso.js`, `sso.json`, `auth/` and `programs/` must be deployed next to `index.html`.
+- Register the deployed origin with Google and `<origin>/auth/redirect.html` with Microsoft ([Sign-in](sso.md)).
 - The `doc/` folder and `README.md` can be deployed alongside the app or left out.
 
 For offline or air-gapped use, download the Pyodide distribution, host it yourself, and change the import URL in `py-worker.js` (and the `modulepreload` link).

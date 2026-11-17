@@ -1,0 +1,11 @@
+{
+  "google": {
+    "client_id": "",
+    "scopes": []
+  },
+  "microsoft": {
+    "client_id": "",
+    "tenant": "common",
+    "scopes": ["User.Read"]
+  }
+}

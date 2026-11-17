@@ -4,6 +4,9 @@ PyTerm can run **interactive terminal programs**: anything that reads what you t
 
 - [Three ways to write a program](#three-ways-to-write-a-program)
 - [Running a program](#running-a-program)
+- [Starting a program automatically (`autoplay`)](#starting-a-program-automatically-autoplay)
+- [What happens when a program ends (`onexit`)](#what-happens-when-a-program-ends-onexit)
+- [The pyterm package](#the-pyterm-package)
 - [The pyterm module](#the-pyterm-module)
 - [pyterm.App reference](#pytermapp-reference)
 - [Keys inside a program](#keys-inside-a-program)
@@ -100,19 +103,83 @@ Saved note #1
 
 | How | What happens |
 |---|---|
-| **Programs** menu → a program | Runs one of the bundled examples |
+| **Programs** menu → a program | Runs one of the programs of `programs/index.json` |
+| `run("calc")` at the `>>>` prompt or from code | The same as the menu, by **id, title or file name** (`run("Calculator")`, `run("calc.py")`): downloads the program and its libraries into `~/programs` if missing, loads the Pyodide packages they import, installs `requires`, then runs it. Extra arguments go to `sys.argv`: `run("screensaver", "matrix")` |
 | **Programs** → *Run a .py file as a program…* | Pick a file from your computer |
-| `run("folder/app.py", "arg1", "arg2")` at the `>>>` prompt | Runs a file already in Python's file system (for example one you uploaded); `sys.argv` gets the arguments |
+| `run("folder/app.py", "arg1", "arg2")` | Runs a file already in Python's file system (for example one you uploaded); `sys.argv` gets the arguments |
 | `https://<site>/?program=calc` | Opens PyTerm and starts that program straight away |
+| `"autoplay": true` in `index.json` | Starts the program when PyTerm opens ([below](#starting-a-program-automatically-autoplay)) |
 | Puter menu bar → **Programs** | Same as the toolbar menu |
+
+`run()` decides between a file and a program like this: an existing file, or a text containing `/` or starting with `~`, is a **file**; anything else is looked up in `programs/index.json`. Use `run("./name.py")` for a file in `/home/pyodide` that has the same name as a program. In browsers without stack switching, `run("calc")` returns an object to `await` (`await run("calc")`).
 
 Programs run in a **fresh namespace** (`__name__ == "__main__"`), so they don't see or change your REPL variables. Scripts opened with **Open** or drag & drop run in the REPL namespace instead (like `python -i`). The status pill shows `Running · <program>` or `Waiting for input · <program>`.
 
-When the program ends (it returns, calls `sys.exit()`, the user types `exit` or presses Ctrl+D), PyTerm prints `■ <program> ended` and the `>>>` prompt comes back.
+When the program ends (it returns, calls `sys.exit()`, the user types `exit` or presses Ctrl+D), PyTerm prints `■ <program> ended` and the `>>>` prompt comes back — unless the program says otherwise with [`onexit`](#what-happens-when-a-program-ends-onexit).
+
+Programs can start other programs: `run("guess")` inside a program runs the game and continues after it.
+
+## Starting a program automatically (`autoplay`)
+
+Add `"autoplay": true` to one program in `programs/index.json` and PyTerm starts it as soon as Python is ready, instead of showing the `>>>` prompt:
+
+```json
+{ "id": "kiosk", "file": "kiosk.py", "title": "Kiosk", "description": "…",
+  "autoplay": true, "onexit": "stop" }
+```
+
+- Only the **first** program with `"autoplay": true` starts. A `?program=<id>` in the address takes precedence.
+- The start-up program begins on a clean screen; the PyTerm welcome banner is shown later, if and when the program returns to the `>>>` prompt.
+- With `"onexit": "stop"`, pressing **Restart** after the program ended starts it again — PyTerm behaves like a dedicated app.
+- Leave `autoplay` out (or `false`) for normal programs.
+
+## What happens when a program ends (`onexit`)
+
+| `onexit` | When the program ends |
+|---|---|
+| `"continue"` (default) | `■ <program> ended`, and the `>>>` prompt comes back with the REPL ready |
+| `"stop"` | Python stops: `■ <program> ended — Python has stopped.` The prompt doesn't come back and every action is disabled (Open, Upload, Save, Programs, Demo, Copy, Clear, drag & drop, keyboard shortcuts and the matching Puter menu items); only **Restart** works. Restart starts a fresh Python (and the program again if it is the `autoplay` one) |
+
+With `"stop"`, the program "ends" in every case: it returns, calls `sys.exit()`, raises an error (the traceback is shown first), or the user presses **Stop**. It also applies when the program is started from code with `run("id")`: when it ends, Python stops instead of returning to the caller.
+
+## The pyterm package
+
+`import pyterm` works in the REPL, in scripts and in programs. It is a package with one sub-module per area:
+
+| Module | Contents |
+|---|---|
+| `pyterm.console` | Terminal I/O: `input`/`ainput`, `confirm`, `choose`, `table`, `style`, `clear`, `title`, `download`, `App`, `run`, `StopProgram`, colour constants (described below) |
+| `pyterm.packages` | `ainstall`, `require`, `installed_version` — [packages from PyPI](#packages-from-pypi-requires) |
+| `pyterm.programs` | The programs of `programs/index.json`: `list()`, `find(query)`, `prepare(query, refresh=False)` (async twins `alist`, `afind`, `aprepare`) |
+| `pyterm.sso` | Google / Microsoft sign-in and OAuth access tokens — see [Sign-in](sso.md) |
+
+Everything in `pyterm.console`, plus `ainstall` and `require`, is also available directly on `pyterm` (`pyterm.input`, `pyterm.App`, …), so older programs keep working. Both styles are fine:
+
+```python
+import pyterm
+name = pyterm.input("Name? ")
+
+from pyterm import console, sso
+console.table(rows)
+tok = sso.login("google")
+```
+
+### pyterm.programs
+
+```python
+>>> from pyterm import programs
+>>> [p["id"] for p in programs.list()]
+['screensaver', 'todo', 'calc', 'banner', 'guess', 'signin']
+>>> m = programs.prepare("banner")   # download + install pyfiglet, without running it
+>>> m["path"], m["requires"], m["onexit"]
+('/home/pyodide/programs/banner.py', ['pyfiglet'], 'continue')
+```
+
+`find()` returns the program's **manifest** (or `None`): `id`, `title`, `description`, `path`, `files` (every file of the program and its libraries in Python's file system), `paths` (import paths), `requires`, `onexit`, `autoplay`. `prepare()` downloads what is missing (or everything with `refresh=True`), loads Pyodide packages, installs `requires` and returns the manifest; it raises `LookupError` for an unknown program. `run("id")` is `prepare()` followed by running `path` with `paths` on `sys.path`.
 
 ## The pyterm module
 
-`import pyterm` works in the REPL, in scripts and in programs.
+The functions below live in `pyterm.console` and are re-exported by `pyterm`.
 
 ### Input
 
@@ -254,8 +321,11 @@ Programs in `programs/` can `import` code from **library folders** (packages) or
 
 | Program field | Meaning |
 |---|---|
+| `id`, `file`, `title`, `description` | Identifier (used by `run("id")` and `?program=id`), file inside `programs/`, menu title and description |
 | `uses` | Names of the libraries the program needs. Leave it out to get **all** libraries; use `[]` for none |
 | `requires` | Packages to install with micropip before the program starts, e.g. `["pyfiglet", "rich==13.7.1"]` |
+| `autoplay` | `true`: start this program when PyTerm opens ([details](#starting-a-program-automatically-autoplay)) |
+| `onexit` | `"continue"` (default) or `"stop"` ([details](#what-happens-when-a-program-ends-onexit)) |
 
 ### What happens when a program starts
 
@@ -270,7 +340,7 @@ Files are fetched fresh each time a program starts (`cache: no-cache`), so updat
 
 ### From the prompt
 
-`run("programs/screensaver.py", "--seconds", "5", "cube")` also puts `~/programs` and its ZIPs on the path, so you can run programs (and test libraries) by hand after launching one from the menu, or after uploading your own into `~/programs`.
+`run("screensaver", "cube")` sets everything up exactly like the menu. `run("programs/screensaver.py", "--seconds", "5", "cube")` runs the file directly and also puts `~/programs` and its ZIPs on the path, so you can test libraries by hand, or run programs you uploaded into `~/programs` yourself.
 
 ### The example: Screen saver
 
@@ -322,7 +392,7 @@ Ready in 1.4s.
 
 ### Installing from code
 
-For programs run with **Open**, drag & drop or `run(...)` (which don't read `index.json`), or to install something only when needed, use the same installer from Python:
+For scripts run with **Open**, drag & drop or `run("path/file.py")` (which don't read `index.json`), or to install something only when needed, use the same installer from Python:
 
 ```python
 import pyterm

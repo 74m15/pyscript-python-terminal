@@ -199,9 +199,11 @@ These names are predefined in the REPL namespace:
 | `clear()` / `cls()` | Clear the terminal screen |
 | `demo()` | Coroutine; run with `await demo()` to see escape sequence support |
 | `download(path)` | Send a file (or a folder, zipped) to your computer or Puter Drive |
+| `run("calc")` | Start a program of the Programs menu by id or title (downloaded and set up like the menu does); extra arguments go to `sys.argv` |
 | `run(path, *args)` | Run a `.py` file from Python's file system as a program |
 | `exit()` / `quit()` | Reset the interpreter (the page cannot be closed from Python). Typing just `exit` explains this. |
-| `import pyterm` | Helpers for interactive programs ([Custom Programs](custom-programs.md)) |
+| `import pyterm` | Helpers for interactive programs: `pyterm.console`, `pyterm.packages`, `pyterm.programs` ([Custom Programs](custom-programs.md#the-pyterm-package)) |
+| `from pyterm import sso` | Google / Microsoft sign-in and access tokens ([Sign-in](sso.md)) |
 | `help`, `copyright`, `credits`, `license` | Standard Python built-ins |
 
 `sys.exit()` and `raise SystemExit` also reset the interpreter and print `Interpreter restarted.`.

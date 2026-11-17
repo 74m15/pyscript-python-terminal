@@ -35,6 +35,15 @@
       "title": "Number guessing game",
       "description": "A plain input()/print() loop — the simplest kind of program.",
       "uses": []
+    },
+    {
+      "id": "signin",
+      "file": "signin.py",
+      "title": "Sign-in demo",
+      "description": "Sign in with Google or Microsoft and call their profile APIs with the access token (pyterm.sso).",
+      "uses": [],
+      "autoplay": false,
+      "onexit": "continue"
     }
   ],
   "libraries": [

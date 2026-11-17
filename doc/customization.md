@@ -14,6 +14,9 @@ Common changes and where to make them. All files are plain source; reload the pa
 - [Bell](#bell)
 - [Adding REPL helpers](#adding-repl-helpers)
 - [Adding programs](#adding-programs)
+- [Start-up program](#start-up-program)
+- [Extending the pyterm package](#extending-the-pyterm-package)
+- [Sign-in providers](#sign-in-providers)
 - [Upload defaults](#upload-defaults)
 - [Stop timeout](#stop-timeout)
 - [Preloading packages](#preloading-packages)
@@ -145,11 +148,51 @@ namespace = {
 }
 ```
 
-Helpers are added again after every Restart. Helpers meant for programs belong in `pyterm_lib.py` (the `pyterm` module) instead.
+Helpers are added again after every Restart. Helpers meant for programs belong in the `pyterm` package (`pylib/pyterm/`) instead.
 
 ## Adding programs
 
-Put a `.py` file in `programs/` and list it in `programs/index.json` (`id`, `file`, `title`, `description`). For the Puter menu bar, add a line to the *Programs* menu in `setupPuterApp()` in `app.js`. Details in [Custom Programs](custom-programs.md#adding-a-program-to-the-programs-menu).
+Put a `.py` file in `programs/` and list it in `programs/index.json` (`id`, `file`, `title`, `description`). It appears in the toolbar menu and in the Puter menu bar automatically. Details in [Custom Programs](custom-programs.md#adding-a-program-to-the-programs-menu).
+
+## Start-up program
+
+To turn PyTerm into a single-purpose app (a kiosk, a game, a tool), give one program `"autoplay": true` and, if users should not reach the REPL, `"onexit": "stop"`:
+
+```json
+{ "id": "kiosk", "file": "kiosk.py", "title": "Kiosk", "description": "…", "autoplay": true, "onexit": "stop" }
+```
+
+The program starts on a clean screen when Python is ready; when it ends Python stops and only **Restart** is available, which starts it again. See [Custom Programs](custom-programs.md#starting-a-program-automatically-autoplay). The texts of the stopped state are in `stopRuntime()` in `app.js` and the `#stopped` panel in `index.html`.
+
+## Extending the pyterm package
+
+The `pyterm` package is in `pylib/pyterm/`, one module per area. To add one (say `pyterm.clipboard`):
+
+1. Write `pylib/pyterm/clipboard.py`. For features that need the page, call it through the bridge:
+
+   ```python
+   from . import _bridge
+   from .console import _await
+
+   async def aread():
+       return await _bridge.acall("clipboard.read")
+
+   def read():
+       return _await(aread())
+   ```
+
+2. Import it in `pylib/pyterm/__init__.py` (`from . import clipboard`) and add it to `__all__`.
+3. Add `'clipboard.py'` to `PYTERM_FILES` in `py-worker.js`.
+4. In `app.js`, add the handler: `rpcHandlers['clipboard.read'] = async (args, { signal }) => navigator.clipboard.readText();`. Return JSON-able values (or `new Binary(value, [ArrayBuffer…])` for bytes) and throw errors with a `code` to raise `BridgeError(code, message)` in Python.
+
+The protocol is described in [Python Bridge](python-bridge.md#requests-from-python-to-the-page-pyterm_bridge).
+
+## Sign-in providers
+
+- Client IDs, tenant and default scopes: `sso.json` ([Sign-in](sso.md#ssojson)).
+- Dialog texts and look: `ssoInteract()` in `app.js` and the `#sso` markup in `index.html`; the renewal notices are `ssoNotice()` (`.notice` CSS).
+- When to show the renewal notice: `RENEW_BEFORE` (seconds, default 300) in `sso.js`.
+- MSAL version: `MSAL_SRC` in `sso.js`.
 
 ## Upload defaults
 

@@ -8,7 +8,10 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
    Starting the REPL, prompts and multi-line input, `input()`, stopping code, keyboard shortcuts, the toolbar, installing packages, escape sequences, examples.
 
 2. **[Custom Programs](custom-programs.md)**
-   Writing interactive terminal programs (`input()` loops, `cmd.Cmd`, the `pyterm` helper module), running them, and adding them to the Programs menu.
+   Writing interactive terminal programs (`input()` loops, `cmd.Cmd`, the `pyterm` package), running them (menu, `run("id")`, `autoplay`), `onexit`, libraries, PyPI packages, and adding them to the Programs menu.
+
+   **[Sign-in with Google and Microsoft](sso.md)**
+   `pyterm.sso`: OAuth access tokens for Python programs, provider setup, `sso.json`, token renewal, examples.
 
 3. **[Files & Upload](files-and-upload.md)**
    The Upload dialog, folders and Puter Drive, archive extraction, name conflicts, the persistent `~/browser` folder, and downloading files from Python.

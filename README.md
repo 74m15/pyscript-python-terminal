@@ -30,14 +30,21 @@ Your name? Ada
 - **Stop button / Ctrl+C** interrupts running code (`KeyboardInterrupt`). If Python can't be interrupted, it is restarted automatically.
 - **Top-level `await`**, `time.sleep()` that doesn't freeze the page, live output while code runs.
 - Packages imported at the prompt are loaded automatically when Pyodide ships them (numpy, pandas, …); `micropip` installs pure-Python wheels from PyPI.
-- Built-in helpers: `clear()`, `demo()`, `download(path)`, `run(path, *args)`.
+- Built-in helpers: `clear()`, `demo()`, `download(path)`, `run("program-id" or path, *args)`.
 
 ### Terminal programs
 - **Programs menu** with ready-made examples: a screen saver (bouncing ball, billiards, rotating cube, ASCII art, Matrix rain), a to-do list (`cmd.Cmd`), a calculator (`pyterm.App`), a banner maker (pyfiglet from PyPI) and a guessing game (plain `input()` loop).
 - **Shared libraries**: folders or ZIP files in `programs/`, declared in `programs/index.json`, are importable by every program (installed in `~/programs` and added to `sys.path` / `PYTHONPATH` while it runs).
 - **`requires`**: programs and libraries can list PyPI packages in `programs/index.json`; PyTerm installs them with micropip before launch, with progress in the terminal (`pyterm.ainstall()` / `pyterm.require()` do the same from code).
 - Run any `.py` file as a program (fresh namespace, `input()`, Ctrl+D to leave), or link to one with `?program=<id>`.
-- The bundled **`pyterm` module** makes command-line apps easy: commands with help, Tab completion, history, colours, tables, yes/no questions and menus. See [doc/custom-programs.md](doc/custom-programs.md).
+- **`run("calc")`** starts a program of the menu from Python by id or title, setting it up exactly like the menu (files, libraries, packages).
+- **`autoplay`** starts a program when PyTerm opens; **`onexit`** chooses what happens when it ends: back to the `>>>` prompt (`continue`) or Python stops and only Restart is possible (`stop`).
+- The bundled **`pyterm` package** makes command-line apps easy: `pyterm.console` (commands with help, Tab completion, history, colours, tables, yes/no questions and menus), `pyterm.packages`, `pyterm.programs`. See [doc/custom-programs.md](doc/custom-programs.md).
+
+### Sign-in with Google and Microsoft
+- **`pyterm.sso`** gives Python programs OAuth 2.0 **access tokens** for Google and Microsoft (Graph, Gmail, Drive, Outlook…), with automatic renewal: silent refresh for Microsoft, one-click renew for Google.
+- Sign-in runs on the page (Google Identity Services, MSAL.js) behind a small consent dialog; programs call the APIs themselves with the token.
+- Set up with client IDs in `sso.json`; a **Sign-in demo** program is included. See [doc/sso.md](doc/sso.md).
 
 ### Files
 - **Upload** dialog (Ctrl/Cmd+U or drag & drop): files, whole folders and Puter Drive files, with progress.
@@ -85,11 +92,14 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 ├── app.js            # UI controller: input line, input() prompts, history, completion, toolbar, programs menu
 ├── engine.js         # PythonEngine: starts the worker, request/response protocol, input replies, Stop
 ├── py-worker.js      # Web Worker: loads Pyodide, output batching, stdin, interrupts, ~/browser persistence
-├── repl.py           # Python side: interactive console, input()/stdin, scripts, uploads, archives, demo()
-├── pyterm_lib.py     # The `pyterm` module available to user programs
+├── repl.py           # Python side: interactive console, input()/stdin, scripts, run(), uploads, archives, demo()
+├── pylib/pyterm/     # The `pyterm` package for programs: console, packages, programs, sso, _bridge
+├── sso.js            # Google Identity Services + Microsoft MSAL sign-in (main thread)
+├── sso.json          # Sign-in client IDs
+├── auth/redirect.html# Microsoft sign-in pop-up return page
 ├── upload.js         # Upload dialog: pickers, drag & drop, archive detection, progress
 ├── terminal.js       # VT100/xterm terminal emulator (parser, screen buffers, renderer)
-├── programs/         # Programs menu: index.json, programs (screensaver, todo, calc, guess) and libraries (termgfx/, savers/)
+├── programs/         # Programs menu: index.json, programs (screensaver, todo, calc, banner, guess, signin) and libraries (termgfx/, savers/)
 ├── icon.svg          # Application icon (Python logo)
 ├── puter-app.json    # Puter App Center listing metadata
 ├── assets/           # icon-512.png (store icon), preview.png / preview.svg (social image)
@@ -106,6 +116,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 | [doc/user-guide.md](doc/user-guide.md) | Using the REPL: prompts, input(), Stop, shortcuts, toolbar, packages, examples |
 | [doc/custom-programs.md](doc/custom-programs.md) | Writing interactive terminal programs and adding them to the Programs menu |
 | [doc/files-and-upload.md](doc/files-and-upload.md) | Upload dialog, archives, conflict handling, `~/browser`, downloads |
+| [doc/sso.md](doc/sso.md) | Google / Microsoft sign-in and access tokens for Python programs (`pyterm.sso`) |
 | [doc/architecture.md](doc/architecture.md) | How the pieces fit together, boot sequence, data flow |
 | [doc/python-bridge.md](doc/python-bridge.md) | The page ↔ worker protocol and `repl.py` internals |
 | [doc/terminal-emulator.md](doc/terminal-emulator.md) | Complete escape sequence reference for the emulator |

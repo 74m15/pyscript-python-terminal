@@ -83,6 +83,19 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
   .btn:disabled { opacity:.4; pointer-events:none; }
   .btn svg { width:16px; height:16px; }
   .kbd { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 1px 6px; border: 1px solid #26313c; border-radius: 5px; color: #9aa7b4; background:#10161d; }
+  .btn.restart-cta { background:#3776AB; color:#fff; }
+  .btn.restart-cta:hover { background:#4285c0; color:#fff; }
+  #stopped { font-family: 'Inter', system-ui, sans-serif; }
+  .brand-logo { width:40px; height:40px; border-radius:10px; background:#fff; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .brand-logo svg { width:20px; height:20px; }
+  .notice { display:flex; align-items:center; gap:.6rem; max-width:24rem; padding:8px 8px 8px 10px; border-radius:12px; border:1px solid #1f2933; background:#0f151c; font-size:13px; color:#d6dde6; }
+  .notice-logo { width:24px; height:24px; border-radius:6px; background:#fff; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .notice-logo svg { width:14px; height:14px; }
+  .notice-text { flex:1; min-width:0; line-height:1.35; }
+  .notice-act { height:28px; padding:0 10px; border-radius:7px; background:#3776AB; color:#fff; font-size:12px; font-weight:500; flex-shrink:0; }
+  .notice-act:hover { background:#4285c0; }
+  .notice-x { width:24px; height:24px; border-radius:6px; color:#7d8b99; flex-shrink:0; }
+  .notice-x:hover { background:#161d25; color:#e6edf3; }
   .dot-pulse { animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
 </style>
@@ -151,6 +164,12 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
         <span class="inline-block w-2 h-4 bg-[#ffd43b] dot-pulse"></span>
         <span id="loader-text">Downloading the Python runtime…</span>
       </div>
+      <!-- shown when a program with "onexit": "stop" has ended -->
+      <div id="stopped" class="hidden flex-wrap items-center gap-3 mt-3 w-fit max-w-full rounded-xl border border-[#1f2933] bg-[#0f151c] pl-3.5 pr-2 py-2 text-[13px]">
+        <i data-lucide="power" class="w-4 h-4 text-slate-500 shrink-0"></i>
+        <span class="text-slate-300">Python has stopped. Restart to start again.</span>
+        <button type="button" id="stopped-restart" class="btn-primary !h-8"><i data-lucide="rotate-ccw"></i>Restart</button>
+      </div>
     </main>
 
     <!-- Status bar -->
@@ -189,6 +208,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
         <div class="flex justify-between"><span>Open and run a script</span><span class="kbd">Ctrl + O</span></div>
         <div class="flex justify-between"><span>Save session transcript</span><span class="kbd">Ctrl + S</span></div>
         <div class="text-slate-400 leading-relaxed">Drag a <span class="mono text-[#7ee787]">.py</span> file onto the terminal to run it; drop anything else (files, folders, ZIPs) to upload it. Files in <span class="mono text-[#7ee787]">~/browser</span> are kept after a reload.</div>
+        <div class="text-slate-400 leading-relaxed">Start a program from Python with <span class="mono text-[#ffd43b]">run("calc")</span> (id or title) or a file with <span class="mono text-[#ffd43b]">run("Upload/app.py")</span>.</div>
         <div class="pt-3 mt-1 border-t border-[#1a222b] text-slate-400 leading-relaxed">
           Top-level <span class="mono text-[#ffd43b]">await</span> works. Install packages with
           <span class="mono text-[#7ee787]">import micropip</span> then
@@ -213,6 +233,35 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
     </div>
     <button type="button" id="toast-close" class="shrink-0 -mr-1 w-6 h-6 rounded-md text-slate-500 hover:text-slate-200 hover:bg-[#161d25]" title="Close">&times;</button>
   </div>
+
+  <!-- Sign-in dialog (pyterm.sso): "Continue" opens the provider's pop-up inside the click -->
+  <div id="sso" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="sso-title">
+    <div class="w-full max-w-sm rounded-xl border border-[#1f2933] bg-[#0f151c]">
+      <div class="px-5 pt-5 pb-4 flex items-center gap-3">
+        <span id="sso-logo" class="brand-logo"></span>
+        <div class="min-w-0">
+          <div id="sso-title" class="font-medium text-[15px] text-slate-100">Sign in</div>
+          <div id="sso-sub" class="text-[12px] text-slate-500 mt-0.5 truncate"></div>
+        </div>
+      </div>
+      <div class="px-5 pb-5 space-y-3">
+        <p id="sso-text" class="text-[13px] text-slate-300 leading-relaxed"></p>
+        <div id="sso-scopes-box">
+          <div class="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">Permissions requested</div>
+          <ul id="sso-scopes" class="mono text-[12px] text-slate-300 space-y-1 rounded-lg border border-[#1a222b] bg-[#0b0f14] px-3 py-2 max-h-32 overflow-y-auto scroll"></ul>
+        </div>
+        <div id="sso-error" class="hidden text-[12px] text-red-300 leading-relaxed"></div>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-3 border-t border-[#1a222b]">
+        <button type="button" class="btn-ghost" id="sso-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="sso-continue"><span id="sso-continue-label">Continue</span></button>
+      </div>
+    </div>
+  </div>
+  <!-- Sign-in notices (e.g. "renew") -->
+  <div id="notices" class="fixed bottom-10 right-4 z-40 flex flex-col items-end gap-2" aria-live="polite"></div>
+  <template id="logo-google"><svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg></template>
+  <template id="logo-microsoft"><svg viewBox="0 0 23 23" aria-hidden="true"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg></template>
 
   <!-- Drop overlay -->
   <div id="drop" class="fixed inset-0 z-40 hidden items-center justify-center bg-[#0b0f14]/85 pointer-events-none">

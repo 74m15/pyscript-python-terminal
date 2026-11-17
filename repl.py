@@ -6,11 +6,13 @@ import builtins
 import importlib
 import inspect
 import io
+import json
 import os
 import shutil
 import sys
 import tarfile
 import time
+import traceback
 import zipfile
 
 import pyterm_host as host
@@ -53,12 +55,23 @@ class _Interrupted(Exception):
     pass
 
 
+class _StopRequested(BaseException):
+    """A program with "onexit": "stop" (programs/index.json) ended: PyTerm stops Python.
+    BaseException, so a program's `except Exception` can't swallow it."""
+
+
+class _StopNow(Exception):
+    """_StopRequested as it leaves the console (asyncio re-raises some BaseExceptions)."""
+
+
 class SafeConsole(PyodideConsole):
     async def runcode(self, source, code):
         try:
             return await super().runcode(source, code)
         except SystemExit as e:
             raise _ExitRequested(str(e)) from None
+        except _StopRequested as e:
+            raise _StopNow(str(e)) from None
         except (KeyboardInterrupt, asyncio.CancelledError, pyterm.StopProgram):
             raise _Interrupted() from None
 
@@ -290,64 +303,222 @@ async def _run_staged():
         if not await pyterm.ainstall(requires, label=label):
             _write(f"{os.path.basename(name)} was not started because a required package is missing.\n", "err")
             return None
-    code = compile(source, name, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
-    ns = {"__name__": "__main__", "__file__": name, "__builtins__": builtins} if isolated else namespace
-    if not isolated:
+    code = _compile(name, source)
+    if isolated:
+        ns = _fresh_ns(name)
+    else:
+        ns = namespace
         namespace["__file__"] = name
-    old_argv = sys.argv
-    sys.argv = [name]
-    with _ProgramPath(paths):
-        try:
-            res = eval(code, ns)
-            if inspect.iscoroutine(res):
-                await res
-        except pyterm.StopProgram:
-            pass  # Stop pressed while the program waited for input: just end it
-        except (SystemExit, _ExitRequested) as e:
-            code_ = getattr(e, "code", None) if isinstance(e, SystemExit) else (e.args[0] if e.args else None)
-            if code_ not in (None, 0, "None", ""):
-                _write(f"{os.path.basename(name)} exited with status {code_}\n", "info")
-        finally:
-            sys.argv = old_argv
-            pyterm.title("")
+    await _aexec(code, name, ns, [name], paths)
     return None
 
 
-def run(path, *args):
-    """Run a .py file as a program in a fresh namespace, e.g. run("Upload/app.py", "--verbose").
-    input() works inside it. Relative paths start in /home/pyodide. The file's folder,
-    ~/programs and any ZIP libraries in ~/programs are importable while it runs."""
-    p = _resolve(path)
-    with open(p, encoding="utf-8") as fh:
-        source = fh.read()
-    code = compile(source, p, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
-    ns = {"__name__": "__main__", "__file__": p, "__builtins__": builtins}
+def _jspi():
+    """True when Python can wait for JavaScript promises from ordinary code (stack switching)."""
+    try:
+        from pyodide.ffi import can_run_sync
+
+        return bool(can_run_sync())
+    except Exception:
+        return False
+
+
+def _compile(name, source):
+    return compile(source, name, "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT, dont_inherit=True)
+
+
+def _fresh_ns(path):
+    return {"__name__": "__main__", "__file__": path, "__builtins__": builtins}
+
+
+class _Run:
+    """One script / program run: sys.argv, import paths, and how it ended."""
+
+    def __init__(self, name, argv, paths):
+        self.name = name
+        self.argv = [str(a) for a in argv]
+        self.guard = _ProgramPath(paths)
+
+    def __enter__(self):
+        self.old_argv = sys.argv
+        sys.argv = self.argv
+        self.guard.__enter__()
+        return self
+
+    def __exit__(self, et, e, tb):
+        sys.argv = self.old_argv
+        self.guard.__exit__(None, None, None)
+        pyterm.title("")
+        if et is None:
+            return False
+        if issubclass(et, pyterm.StopProgram):
+            return True  # Stop pressed while the program waited for input: just end it
+        if issubclass(et, (SystemExit, _ExitRequested)):
+            status = e.code if isinstance(e, SystemExit) else (e.args[0] if e.args else None)
+            if status not in (None, 0, "None", ""):
+                _write(f"{os.path.basename(self.name)} exited with status {status}\n", "info")
+            return True
+        return False
+
+
+async def _aexec(code, name, ns, argv, paths):
+    with _Run(name, argv, paths):
+        res = eval(code, ns)
+        if inspect.iscoroutine(res):
+            await res
+
+
+def _exec(code, name, ns, argv, paths):
+    # top-level await inside the file is waited for with stack switching
+    with _Run(name, argv, paths):
+        res = eval(code, ns)
+        if inspect.iscoroutine(res):
+            from pyodide.ffi import run_sync
+
+            run_sync(res)
+
+
+def _file_paths(p):
+    """Import paths for run(file): its folder, ~/programs and the ZIP libraries in it."""
     paths = [os.path.dirname(p)]
     if os.path.isdir(PROGRAMS_DIR):
         if PROGRAMS_DIR not in paths:
             paths.append(PROGRAMS_DIR)
         paths += sorted(os.path.join(PROGRAMS_DIR, f) for f in os.listdir(PROGRAMS_DIR) if f.endswith(".zip"))
-    old_argv = sys.argv
-    sys.argv = [p, *map(str, args)]
-    guard = _ProgramPath(paths)
-    guard.__enter__()
-    try:
-        res = eval(code, ns)
-        if inspect.iscoroutine(res):
-            from pyodide.ffi import can_run_sync, run_sync
+    return paths
 
-            if can_run_sync():
-                run_sync(res)
-            else:
-                return res  # await it at the prompt
-    except SystemExit as e:
-        if e.code not in (None, 0):
-            _write(f"{os.path.basename(p)} exited with status {e.code}\n", "info")
+
+# -- programs of programs/index.json started with run("id")
+def _program_event(m, state):
+    host.event("program", json.dumps({"id": m.get("id"), "title": m.get("title"), "state": state,
+                                      "onexit": m.get("onexit") or "continue"}))
+
+
+def _program_code(m):
+    with open(m["path"], encoding="utf-8") as fh:
+        return _compile(m["path"], fh.read())
+
+
+def _program_error(e):
+    """Show how a program with "onexit": "stop" failed (Python stops right after)."""
+    if isinstance(e, (KeyboardInterrupt, asyncio.CancelledError, _Interrupted)):
+        _write("\nKeyboardInterrupt\n", "err")
+        return
+    tb = traceback.format_exception(type(e), e, e.__traceback__)
+    keep = [t for t in tb[1:] if '"<pyterm>"' not in t and "/.pyterm/" not in t]
+    _write("".join(tb[:1] + keep), "err")
+
+
+def _not_found(query, e):
+    if str(query).lower().endswith((".py", ".pyw")):
+        return FileNotFoundError(f"no file or program named {query!r} (files: give a path, e.g. run('./{query}'))")
+    return e
+
+
+def _run_program(query, args):
+    from pyodide.ffi import run_sync
+
+    try:
+        m = run_sync(pyterm.programs.aprepare(query, animate=False))
+    except LookupError as e:
+        raise _not_found(query, e) from None
+    code = _program_code(m)
+    stop = m.get("onexit") == "stop"
+    _program_event(m, "start")
+    try:
+        _exec(code, m["path"], _fresh_ns(m["path"]), [m["path"], *args], m["paths"])
+    except BaseException as e:
+        if not stop or isinstance(e, _StopRequested):
+            raise
+        _program_error(e)
     finally:
-        sys.argv = old_argv
-        guard.__exit__(None, None, None)
-        pyterm.title("")
-    return None
+        _program_event(m, "end")
+    if stop:
+        raise _StopRequested(m["id"])
+
+
+async def _arun_program(query, args):
+    try:
+        m = await pyterm.programs.aprepare(query)
+    except LookupError as e:
+        raise _not_found(query, e) from None
+    code = _program_code(m)
+    stop = m.get("onexit") == "stop"
+    _program_event(m, "start")
+    try:
+        await _aexec(code, m["path"], _fresh_ns(m["path"]), [m["path"], *args], m["paths"])
+    except BaseException as e:
+        if not stop or isinstance(e, _StopRequested):
+            raise
+        _program_error(e)
+    finally:
+        _program_event(m, "end")
+    if stop:
+        raise _StopRequested(m["id"])
+
+
+class _Done:
+    """What run() returns once the program has finished; `await run(...)` works too."""
+
+    def __await__(self):
+        return
+        yield  # noqa: B901  (makes this a generator)
+
+    def __repr__(self):
+        return ""
+
+
+_DONE = _Done()
+
+
+class _Later:
+    """What run() returns in browsers that can't pause Python: `await` it."""
+
+    def __init__(self, coro, call):
+        self._coro = coro
+        self._call = call
+        self._started = False
+
+    def __await__(self):
+        self._started = True
+        return self._coro.__await__()
+
+    def __repr__(self):
+        return f"<not started: this browser can't pause Python, use `await {self._call}`>"
+
+    def __del__(self):
+        if not self._started:  # never awaited: no "coroutine was never awaited" warning
+            try:
+                self._coro.close()
+            except Exception:
+                pass
+
+
+def run(target, *args):
+    """Run a program or a .py file in a fresh namespace:
+
+        run("calc")                        # a program of the Programs menu (id, title or file)
+        run("Upload/app.py", "--verbose")  # a file; relative paths start in /home/pyodide
+
+    A program is set up exactly like the Programs menu does: its file and libraries are
+    downloaded into ~/programs when missing, then the packages it needs are installed.
+    input() works inside both. Extra arguments end up in sys.argv."""
+    t = os.fspath(target) if isinstance(target, os.PathLike) else str(target)
+    t = t.strip()
+    p = _resolve(t)
+    call = f"run({', '.join(repr(a) for a in (t, *args))})"
+    if os.path.isfile(p) or "/" in t or t.startswith("~"):
+        with open(p, encoding="utf-8") as fh:
+            code = _compile(p, fh.read())
+        ns, argv, paths = _fresh_ns(p), [p, *args], _file_paths(p)
+        if code.co_flags & inspect.CO_COROUTINE and not _jspi():
+            return _Later(_aexec(code, p, ns, argv, paths), call)
+        _exec(code, p, ns, argv, paths)
+        return _DONE
+    if _jspi():
+        _run_program(t, args)
+        return _DONE
+    return _Later(_arun_program(t, args), call)
 
 
 class _Exit:
@@ -415,12 +586,14 @@ async def _push(line):
         return "complete"
     try:
         result = await fut
-        if result is not None:
+        if result is not None and not isinstance(result, _Done):
             namespace["_"] = result
             _write(_short_repr(result) + "\n", "result")
     except _ExitRequested:
         make_console()
         return "exit"
+    except (_StopNow, _StopRequested):
+        return "stopped"  # the page stops Python ("onexit": "stop")
     except (_Interrupted, KeyboardInterrupt, asyncio.CancelledError):
         _write("\nKeyboardInterrupt\n", "err")
     except BaseException as e:

@@ -2,6 +2,7 @@ import { createIcons, icons } from 'https://cdn.jsdelivr.net/npm/lucide@latest/+
 import { Terminal } from './terminal.js';
 import { PythonEngine } from './engine.js';
 import { createUploader, collectDrop } from './upload.js';
+import { createSSO, SSOError } from './sso.js';
 createIcons({ icons });
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,12 @@ let pyVersion = '';
 let inputReq = null;      // pending input() request from Python
 let currentProgram = null;
 let stopTimer = 0;
+let activeRun = null;      // program started by runFile: {id, title, onexit, autoplay}
+const programStack = [];  // programs started from Python with run("id")
+let lastProgram = null;   // the last program that started or ended
+let stopped = null;       // Python was stopped by a program with "onexit": "stop"
+let bannerPending = null; // autoplay: the welcome banner waits until the program returns to the prompt
+let relaunch = null;      // autoplay program to start again after Restart
 
 /* ---------- history ---------- */
 const histories = new Map();
@@ -93,7 +100,10 @@ const engine = new PythonEngine({
   onStatus: (t) => { const l = $('loader-text'); if (l) l.textContent = t; },
   onInput: (req) => beginInput(req),
   onDownload: (name, data, mime) => saveBlob(new Blob([data], { type: mime || 'application/octet-stream' }), name),
-  onReady: (info) => pythonReady(info),
+  onReady: (info) => (booted ? pythonReady(info) : programsLoaded.then(() => pythonReady(info))),
+  onRpc: (m) => handleRpc(m),
+  onRpcCancel: (rid) => cancelRpc(rid),
+  onEvent: (name, data) => handleEvent(name, data),
   onFatal: (msg) => {
     setStatus('error');
     const l = $('loader-text');
@@ -135,13 +145,15 @@ function setStatus(state) {
     ready: ['bg-emerald-400', 'Ready'],
     running: ['bg-sky-400 dot-pulse', 'Running'],
     input: ['bg-violet-400 dot-pulse', 'Waiting for input'],
+    signin: ['bg-violet-400 dot-pulse', 'Waiting for sign-in'],
     stopping: ['bg-amber-400 dot-pulse', 'Stopping'],
+    stopped: ['bg-slate-500', 'Stopped'],
     error: ['bg-red-400', 'Failed'],
   };
   const [cls, label] = map[state];
   statusDot.className = 'w-1.5 h-1.5 rounded-full ' + cls;
-  statusText.textContent = currentProgram && (state === 'running' || state === 'input') ? `${label} · ${currentProgram}` : label;
-  const showStop = state === 'running' || state === 'input' || state === 'stopping';
+  statusText.textContent = currentProgram && (state === 'running' || state === 'input' || state === 'signin') ? `${label} · ${currentProgram}` : label;
+  const showStop = state === 'running' || state === 'input' || state === 'signin' || state === 'stopping';
   $('btn-stop').classList.toggle('hidden', !showStop);
   $('btn-stop').classList.toggle('inline-flex', showStop);
 }
@@ -238,6 +250,7 @@ function finishInput(status) {
 const queue = [];
 
 function whenIdle(fn) {
+  if (stopped) return;
   if (ready && !busy) fn(); else queue.push(fn);
 }
 function drainQueue() {
@@ -252,6 +265,8 @@ function beginBusy() {
 function endBusy() {
   busy = false;
   inputReq = null;
+  programStack.length = 0;
+  currentProgram = null;
   clearTimeout(stopTimer);
   setStatus('ready');
   setPrompt(continuing ? PS2 : PS1);
@@ -276,6 +291,7 @@ async function runSource(raw) {
       write(String(e && e.message || e) + '\n', 'err');
       lastResult = 'complete';
     }
+    if (lastResult === 'stopped') { stopRuntime(lastProgram); return; } // run("id") of an "onexit": "stop" program
     if (lastResult === 'exit') {
       ensureNewline();
       write('Interpreter restarted.\n', 'info');
@@ -293,26 +309,40 @@ async function runSource(raw) {
 }
 
 async function runFile(name, source, opts = {}) {
-  const { program = null, isolated = false, files = null, paths = null, extra = [], requires = [] } = opts;
+  const { program = null, title = null, isolated = false, files = null, paths = null, extra = [], requires = [],
+    onexit = 'continue', autoplay = false, quiet = false } = opts;
+  if (stopped) return;
   if (!ready || busy) { queue.push(() => runFile(name, source, opts)); return; }
   if (continuing) { try { await engine.call('reset_buffer'); } catch {} continuing = false; }
   cmd.value = '';
   currentProgram = program;
+  activeRun = program ? { id: program, title: title || program, onexit, autoplay } : null;
   beginBusy();
   ensureNewline();
-  write(program ? `▶ Starting ${program} — type exit or press Ctrl+D to come back to Python\n` : `▶ Running ${name}\n`, 'info');
+  if (!quiet) {
+    write(!program ? `▶ Running ${name}\n`
+      : onexit === 'stop' ? `▶ Starting ${program}\n`
+      : `▶ Starting ${program} — type exit or press Ctrl+D to come back to Python\n`, 'info');
+  }
+  let res = null;
   try {
     // install the program and its libraries in ~/programs, then run it with them on sys.path
     if (files && files.length) await engine.call('write_files', { files }, files.map((f) => f.data));
-    await engine.call('run_file', { name, source, isolated, paths, extra, requires });
+    res = await engine.call('run_file', { name, source, isolated, paths, extra, requires });
   } catch (e) {
     if (!ready) return;
     write(String(e && e.message || e) + '\n', 'err');
   }
+  const run = activeRun;
+  activeRun = null;
+  // "onexit": "stop" — the program (or one it started with run()) ends Python
+  if (res === 'stopped') { stopRuntime(lastProgram || run); return; }
+  if (run && run.onexit === 'stop') { stopRuntime(run); return; }
   ensureNewline();
   write(program ? `■ ${program} ended\n` : `■ ${name} finished — its variables are available at the prompt\n`, 'info');
   currentProgram = null;
   setTitle('');
+  if (bannerPending) { const info = bannerPending; bannerPending = null; banner(info); }
   endBusy();
 }
 const runScript = (name, source) => runFile(name, source);
@@ -330,17 +360,29 @@ function interrupt() {
   }
   setStatus('stopping');
   // Python didn't stop on its own (e.g. a busy loop without shared memory): restart the worker.
-  stopTimer = setTimeout(() => { if (busy) hardRestart('Stopped — Python had to be restarted, so variables were cleared.'); }, 2500);
+  stopTimer = setTimeout(() => { if (busy) hardRestart('Stopped — Python had to be restarted, so variables were cleared.', true); }, 2500);
 }
 
-function hardRestart(message) {
-  clearTimeout(stopTimer);
+function resetSession() {
   ready = false;
   busy = false;
   inputReq = null;
   continuing = false;
   currentProgram = null;
+  activeRun = null;
+  programStack.length = 0;
   queue.length = 0;
+  bannerPending = null;
+  cancelRpcs();
+  closeSso();
+}
+
+// fromStop: the user pressed Stop and Python did not stop by itself
+function hardRestart(message, fromStop = false) {
+  const owner = fromStop ? stopOwner() : null;
+  if (owner) { stopRuntime(owner); return; } // a program with "onexit": "stop" ends Python instead
+  clearTimeout(stopTimer);
+  resetSession();
   cmd.value = '';
   showInput(false);
   ensureNewline();
@@ -351,6 +393,8 @@ function hardRestart(message) {
   engine.start();
 }
 let restartPending = false;
+
+const restartAny = () => (stopped ? restartFromStopped() : restartPython());
 
 async function restartPython() {
   if (!ready) return;
@@ -530,10 +574,10 @@ cmd.addEventListener('paste', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
-  const modal = !$('help').classList.contains('hidden') || uploader.isOpen();
+  const modal = !$('help').classList.contains('hidden') || uploader.isOpen() || !!ssoState;
   if ((e.ctrlKey || e.metaKey) && key === 'o' && !modal) { e.preventDefault(); openScript(); }
   else if ((e.ctrlKey || e.metaKey) && key === 's' && !modal) { e.preventDefault(); saveTranscript(); }
-  else if ((e.ctrlKey || e.metaKey) && key === 'u' && !modal) { e.preventDefault(); uploader.open(); }
+  else if ((e.ctrlKey || e.metaKey) && key === 'u' && !modal) { e.preventDefault(); if (!stopped) uploader.open(); }
   else if (e.ctrlKey && key === 'c' && busy && !inputReq && !window.getSelection().toString() && !modal) {
     e.preventDefault();
     interrupt();
@@ -548,6 +592,7 @@ screen.addEventListener('mouseup', (e) => {
 
 /* ---------- files: open / save / download ---------- */
 async function openScript() {
+  if (stopped) return;
   if (inPuter) {
     try {
       const picked = await P.ui.showOpenFilePicker({ accept: ['.py', '.pyw', '.txt'] }).undefinedOnCancel;
@@ -593,6 +638,7 @@ async function saveBlob(blob, name) {
 }
 
 async function saveTranscript() {
+  if (stopped) return;
   const name = `pyterm-session-${stamp()}.txt`;
   await saveBlob(new Blob([term.getText()], { type: 'text/plain' }), name);
   flashLabel('btn-save', 'Saved');
@@ -661,7 +707,7 @@ let dragDepth = 0;
 const drop = $('drop');
 const showDrop = (on) => { drop.classList.toggle('hidden', !on); drop.classList.toggle('flex', on); };
 window.addEventListener('dragenter', (e) => {
-  if (uploader.isOpen()) return;
+  if (uploader.isOpen() || stopped) return;
   if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragDepth++; showDrop(true); }
 });
 window.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) showDrop(false); });
@@ -669,7 +715,7 @@ window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', async (e) => {
   e.preventDefault();
   dragDepth = 0; showDrop(false);
-  if (uploader.isOpen() || !e.dataTransfer) return;
+  if (uploader.isOpen() || stopped || !e.dataTransfer) return;
   const { items, hasFolder } = await collectDrop(e.dataTransfer);
   if (!items.length) return;
   if (items.length === 1 && !hasFolder && /\.pyw?$/i.test(items[0].file.name)) {
@@ -689,7 +735,7 @@ async function loadPrograms() {
   try {
     const r = await fetch('programs/index.json', { cache: 'no-cache' });
     const data = await r.json();
-    programs = data.programs || [];
+    programs = (data.programs || []).filter((p) => p && p.id && p.file);
     libraries = data.libraries || [];
   } catch { programs = []; libraries = []; }
   const list = $('programs-list');
@@ -708,6 +754,19 @@ async function loadPrograms() {
 }
 const programsLoaded = loadPrograms();
 
+const onexitOf = (p) => (p && p.onexit === 'stop' ? 'stop' : 'continue');
+
+// A program by id, title or file name (case-insensitive), e.g. "calc", "Calculator", "calc.py"
+function findProgram(query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return null;
+  const file = (p) => cleanRel(p.file).toLowerCase();
+  return programs.find((p) => String(p.id).toLowerCase() === q)
+    || programs.find((p) => String(p.title || '').toLowerCase() === q)
+    || programs.find((p) => { const f = file(p); return f === q || f.replace(/\.pyw?$/, '') === q || f.split('/').pop() === q; })
+    || null;
+}
+
 // "a/../b\c" → "b/c": keeps every path inside programs/
 function cleanRel(p) {
   return String(p || '').replace(/\\/g, '/').split('/').filter((s) => s && s !== '.' && s !== '..').join('/');
@@ -719,8 +778,8 @@ async function fetchBytes(rel) {
   return r.arrayBuffer();
 }
 
-/* Fetch a program and the libraries it uses (folders listed file by file, or ZIPs). */
-async function prepareProgram(p) {
+/* Where a program and its libraries go in ~/programs, its import paths and packages. */
+function programLayout(p) {
   const progRel = cleanRel(p.file);
   const progPath = `${PROG_HOME}/${progRel}`;
   const progDir = progPath.slice(0, progPath.lastIndexOf('/'));
@@ -742,37 +801,320 @@ async function prepareProgram(p) {
       jobs.push({ rel, path: `${PROG_HOME}/${rel}`, py: /\.py$/i.test(rel) });
     }
   }
-  const dec = new TextDecoder();
-  const [src, ...datas] = await Promise.all([
-    fetchBytes(progRel).then((b) => dec.decode(b)),
-    ...jobs.map((j) => fetchBytes(j.rel)),
-  ]);
-  const extra = [];
-  const files = jobs.map((j, i) => {
-    if (j.py) extra.push(dec.decode(datas[i]));
-    return { path: j.path, data: datas[i] };
-  });
-  files.push({ path: progPath, data: new TextEncoder().encode(src).buffer });
   // PyPI / Pyodide packages to install with micropip before the program starts:
   // the libraries' "requires" first, then the program's own
   const asList = (v) => (Array.isArray(v) ? v : typeof v === 'string' ? [v] : []);
   const requires = [...new Set([...wanted.flatMap((l) => asList(l.requires)), ...asList(p.requires)]
     .map((r) => String(r).trim()).filter(Boolean))];
-  return { name: progPath, src, files, paths: [...new Set(paths)], extra, requires };
+  return { progRel, progPath, jobs, paths: [...new Set(paths)], requires };
 }
 
-async function launchProgram(id) {
+/* What pyterm.programs.find() returns to Python. */
+function programManifest(p) {
+  const L = programLayout(p);
+  return {
+    id: p.id, title: p.title || p.id, description: p.description || '', path: L.progPath,
+    files: [...L.jobs.map((j) => j.path), L.progPath], paths: L.paths, requires: L.requires,
+    onexit: onexitOf(p), autoplay: p.autoplay === true,
+  };
+}
+
+/* Fetch a program and the libraries it uses (folders listed file by file, or ZIPs). */
+async function prepareProgram(p) {
+  const L = programLayout(p);
+  const dec = new TextDecoder();
+  const [srcBuf, ...datas] = await Promise.all([fetchBytes(L.progRel), ...L.jobs.map((j) => fetchBytes(j.rel))]);
+  const src = dec.decode(srcBuf);
+  const extra = [];
+  const files = L.jobs.map((j, i) => {
+    if (j.py) extra.push(dec.decode(datas[i]));
+    return { path: j.path, data: datas[i] };
+  });
+  files.push({ path: L.progPath, data: srcBuf });
+  return { name: L.progPath, src, files, paths: L.paths, extra, requires: L.requires };
+}
+
+// Messages written while Python is idle go above the prompt; while code runs they wait.
+function logLine(text, kind) {
+  if (busy) { deferredLog.push([text, kind]); return; }
+  const idle = ready && !stopped;
+  if (idle) { term.detachInput(); ensureNewline(); }
+  write(text, kind);
+  if (idle && !inputRow.classList.contains('hidden')) term.attachInput(inputRow);
+}
+
+/* Start a program of programs/index.json like the Programs menu does. Returns false if it could not start. */
+async function launchProgram(query, extra = {}) {
   await programsLoaded;
-  const p = programs.find((x) => x.id === id);
-  if (!p) { write(`No program named ${id}\n`, 'err'); return; }
-  try {
+  if (stopped) return false;
+  const p = findProgram(query);
+  if (!p) { logLine(`No program named ${query} in programs/index.json\n`, 'err'); return false; }
+  let prep;
+  try { prep = await prepareProgram(p); }
+  catch (e) { logLine(`Could not load ${p.title || p.id}: ${e && e.message || e}\n`, 'err'); return false; }
+  runFile(prep.name, prep.src, {
+    program: p.id, title: p.title, isolated: true, files: prep.files, paths: prep.paths, extra: prep.extra,
+    requires: prep.requires, onexit: onexitOf(p), ...extra,
+  });
+  return true;
+}
+
+/* ---------- requests from Python (pyterm._bridge) ---------- */
+// A handler gets (args, {signal}) and returns a JSON-able value, or new Binary(value, [ArrayBuffer…]).
+// Throw an Error with a `code` to send Python a BridgeError(code, message). `signal` aborts when
+// the user presses Stop. New features: add a handler here and a wrapper module in pylib/pyterm.
+class Binary { constructor(value, blobs) { this.value = value; this.blobs = blobs; } }
+const bridgeError = (code, message) => Object.assign(new Error(message), { code });
+
+const rpcHandlers = {
+  'programs.list': async () => {
+    await programsLoaded;
+    return programs.map((p) => ({
+      id: p.id, title: p.title || p.id, description: p.description || '', file: p.file,
+      uses: p.uses || null, requires: p.requires || [], autoplay: p.autoplay === true, onexit: onexitOf(p),
+    }));
+  },
+  'programs.manifest': async ({ query }) => {
+    await programsLoaded;
+    const p = findProgram(query);
+    return p ? programManifest(p) : null;
+  },
+  'programs.fetch': async ({ query }) => {
+    await programsLoaded;
+    const p = findProgram(query);
+    if (!p) throw bridgeError('not_found', `no program named ${query}`);
     const prep = await prepareProgram(p);
-    runFile(prep.name, prep.src, { program: p.id, isolated: true, files: prep.files, paths: prep.paths, extra: prep.extra, requires: prep.requires });
+    return new Binary({ files: prep.files.map((f) => f.path) }, prep.files.map((f) => f.data));
+  },
+};
+
+const rpcControllers = new Map();
+async function handleRpc(m) {
+  const fn = rpcHandlers[m.name];
+  if (!fn) { engine.rpcReply(m, null, [], { code: 'unknown_request', message: `PyTerm has no handler for ${m.name}` }); return; }
+  let args = {};
+  try { args = JSON.parse(m.args || '{}') || {}; } catch {}
+  const key = `${m.gen}:${m.rid}`;
+  const ctl = new AbortController();
+  rpcControllers.set(key, ctl);
+  try {
+    const r = await fn(args, { signal: ctl.signal });
+    if (ctl.signal.aborted) return;
+    if (r instanceof Binary) engine.rpcReply(m, r.value, r.blobs);
+    else engine.rpcReply(m, r);
   } catch (e) {
-    ensureNewlineIfIdle();
-    write(`Could not load ${p.title}: ${e && e.message || e}\n`, 'err');
+    if (ctl.signal.aborted) return;
+    engine.rpcReply(m, null, [], { code: (e && e.code) || 'error', message: (e && e.message) || String(e) });
+  } finally {
+    rpcControllers.delete(key);
   }
 }
+function cancelRpc(rid) {
+  const key = `${engine.gen}:${rid}`;
+  const c = rpcControllers.get(key);
+  if (c) { rpcControllers.delete(key); c.abort(); }
+}
+function cancelRpcs() {
+  for (const c of rpcControllers.values()) c.abort();
+  rpcControllers.clear();
+}
+
+/* One-way notifications from Python. */
+function handleEvent(name, data) {
+  if (name !== 'program' || !data) return;
+  // a program started / ended with run("id") from Python
+  if (data.state === 'start') programStack.push(data);
+  else {
+    const i = programStack.map((p) => p.id).lastIndexOf(data.id);
+    if (i >= 0) programStack.splice(i, 1);
+  }
+  lastProgram = data;
+  const top = programStack[programStack.length - 1];
+  currentProgram = top ? top.id : (activeRun ? activeRun.id : null);
+  refreshStatus();
+}
+
+function refreshStatus() {
+  if (!busy || statusText.textContent.startsWith('Stopping')) return;
+  setStatus(ssoState ? 'signin' : inputReq ? 'input' : 'running');
+}
+
+/* ---------- "onexit": "stop" ---------- */
+// The program that owns this run and asks Python to stop when it ends, if any.
+function stopOwner() {
+  const fromRun = [...programStack].reverse().find((p) => p.onexit === 'stop');
+  if (fromRun) return fromRun;
+  return activeRun && activeRun.onexit === 'stop' ? activeRun : null;
+}
+
+const LOCKED = ['btn-open', 'btn-upload', 'btn-save', 'btn-programs', 'btn-demo', 'btn-copy', 'btn-clear'];
+function setStoppedUI(on) {
+  for (const id of LOCKED) $(id).disabled = on;
+  $('btn-restart').classList.toggle('restart-cta', on);
+  const panel = $('stopped');
+  panel.classList.toggle('hidden', !on);
+  panel.classList.toggle('flex', on);
+  if (on) {
+    closePrograms();
+    if (uploader.isOpen()) uploader.close();
+    screen.scrollTop = screen.scrollHeight;
+    $('stopped-restart').focus({ preventScroll: true });
+  }
+}
+
+// Python ends with the program: the only way on is Restart.
+function stopRuntime(prog) {
+  clearTimeout(stopTimer);
+  const title = (prog && (prog.title || prog.id)) || 'The program';
+  const autoplay = !!(prog && prog.autoplay);
+  resetSession();
+  engine.stop();
+  stopped = { id: prog && prog.id, title, relaunch: autoplay ? prog.id : null };
+  bannerPending = null;
+  pasteQueue.length = 0;
+  cmd.value = '';
+  showInput(false);
+  term.showCursor = false;
+  ensureNewline();
+  write(`■ ${title} ended — Python has stopped.\n`, 'info');
+  setTitle('');
+  setStatus('stopped');
+  setStoppedUI(true);
+}
+
+function restartFromStopped() {
+  const s = stopped;
+  if (!s) return;
+  stopped = null;
+  setStoppedUI(false);
+  relaunch = s.relaunch;
+  if (relaunch) { term.detachInput(); term.reset(); fit(); } // the start-up program begins on a clean screen
+  else { ensureNewline(); write('Restarting Python…\n', 'info'); }
+  setStatus('starting');
+  restartPending = true;
+  engine.start();
+}
+
+/* ---------- sign-in (pyterm.sso) ---------- */
+const SSO_NAMES = { google: 'Google', microsoft: 'Microsoft' };
+let ssoState = null;
+
+function scopeLabel(s) {
+  return String(s).replace(/^https:\/\/www\.googleapis\.com\/auth\//, '').replace(/^https:\/\/graph\.microsoft\.com\//, '');
+}
+
+function ssoInteract({ provider, scopes, mode, signal }, start) {
+  return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) { reject(new SSOError('cancelled', 'Sign-in cancelled')); return; }
+    if (ssoState) { reject(new SSOError('busy', 'Another sign-in is already waiting')); return; }
+    const st = { provider, resolve, reject, start, working: false, signal, lastError: null };
+    st.onAbort = () => finishSso(st, new SSOError('cancelled', 'Sign-in cancelled'));
+    if (signal) signal.addEventListener('abort', st.onAbort);
+    ssoState = st;
+    const name = SSO_NAMES[provider] || provider;
+    const who = currentProgram ? currentProgram : 'Your Python code';
+    $('sso-logo').innerHTML = $(`logo-${provider}`) ? $(`logo-${provider}`).innerHTML : '';
+    $('sso-title').textContent = mode === 'renew' ? `Renew ${name} sign-in` : `Sign in with ${name}`;
+    $('sso-sub').textContent = `Requested by ${who}`;
+    $('sso-text').textContent = mode === 'renew'
+      ? `The ${name} sign-in has to be renewed. Continue opens the ${name} window; the program waits until you are done.`
+      : `Continue opens the ${name} sign-in window. The access token stays in this tab and is only given to the running program.`;
+    const list = $('sso-scopes');
+    list.innerHTML = '';
+    for (const s of scopes || []) {
+      const li = document.createElement('li');
+      li.className = 'truncate';
+      li.textContent = scopeLabel(s);
+      li.title = s;
+      list.appendChild(li);
+    }
+    $('sso-scopes-box').classList.toggle('hidden', !(scopes && scopes.length));
+    setSsoWorking(false);
+    showSsoError('');
+    const dlg = $('sso');
+    dlg.classList.remove('hidden');
+    dlg.classList.add('flex');
+    refreshStatus();
+    setTimeout(() => $('sso-continue').focus(), 0);
+  });
+}
+
+function setSsoWorking(on) {
+  $('sso-continue').disabled = on;
+  $('sso-continue-label').textContent = on ? 'Waiting for the sign-in window…' : (ssoState && ssoState.lastError ? 'Try again' : 'Continue');
+}
+function showSsoError(text) {
+  const el = $('sso-error');
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
+}
+
+function finishSso(st, err, value) {
+  if (ssoState !== st) return;
+  ssoState = null;
+  if (st.signal) st.signal.removeEventListener('abort', st.onAbort);
+  const dlg = $('sso');
+  dlg.classList.add('hidden');
+  dlg.classList.remove('flex');
+  refreshStatus();
+  if (inputReq || (ready && !busy)) cmd.focus({ preventScroll: true });
+  if (err) st.reject(err); else st.resolve(value);
+}
+function closeSso() { if (ssoState) finishSso(ssoState, new SSOError('cancelled', 'Sign-in cancelled')); }
+
+const SSO_HINTS = {
+  popup_blocked: 'The browser blocked the sign-in window. Allow pop-ups for this site, then try again.',
+  cancelled: 'The sign-in window was closed before finishing.',
+  consent_denied: 'The permissions were not granted.',
+  network: 'The sign-in service could not be reached. Check the connection.',
+  busy: 'Another sign-in window is still open. Finish or close it first.',
+};
+
+$('sso-continue').onclick = () => {
+  const st = ssoState;
+  if (!st || st.working) return;
+  st.working = true;
+  setSsoWorking(true);
+  let p;
+  try { p = st.start(); } catch (e) { p = Promise.reject(e); } // opens the pop-up inside this click
+  Promise.resolve(p).then((v) => finishSso(st, null, v), (e) => {
+    if (ssoState !== st) return;
+    st.working = false;
+    st.lastError = e instanceof SSOError ? e : new SSOError((e && e.code) || 'error', (e && e.message) || String(e));
+    setSsoWorking(false);
+    showSsoError(SSO_HINTS[st.lastError.code] || st.lastError.message);
+  });
+};
+$('sso-cancel').onclick = () => {
+  const st = ssoState;
+  if (!st) return;
+  const e = st.lastError && st.lastError.code !== 'cancelled' ? st.lastError : new SSOError('cancelled', 'Sign-in cancelled by the user');
+  finishSso(st, e);
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ssoState) $('sso-cancel').click(); });
+
+// Non-blocking notices (e.g. "Your Google sign-in expires at 14:05 — Renew")
+function ssoNotice(provider, text, actionLabel, onAction) {
+  ssoClearNotice(provider);
+  const box = document.createElement('div');
+  box.id = `notice-${provider}`;
+  box.className = 'notice';
+  box.innerHTML = '<span class="notice-logo"></span><span class="notice-text"></span><button type="button" class="notice-act"></button><button type="button" class="notice-x" title="Dismiss">&times;</button>';
+  box.querySelector('.notice-logo').innerHTML = $(`logo-${provider}`) ? $(`logo-${provider}`).innerHTML : '';
+  box.querySelector('.notice-text').textContent = text;
+  const act = box.querySelector('.notice-act');
+  act.textContent = actionLabel || 'OK';
+  act.onclick = () => { ssoClearNotice(provider); if (onAction) onAction(); }; // runs inside the click: pop-ups allowed
+  box.querySelector('.notice-x').onclick = () => ssoClearNotice(provider);
+  $('notices').appendChild(box);
+}
+function ssoClearNotice(provider) {
+  const el = $(`notice-${provider}`);
+  if (el) el.remove();
+}
+
+const sso = createSSO({ ui: { interact: ssoInteract, notice: ssoNotice, clearNotice: ssoClearNotice } });
+Object.assign(rpcHandlers, sso.handlers);
 
 function openPrograms() { progMenu.classList.remove('hidden'); }
 function closePrograms() { progMenu.classList.add('hidden'); }
@@ -785,6 +1127,7 @@ $('programs-file').onclick = () => { closePrograms(); $('program-input').click()
 $('program-input').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
   e.target.value = '';
+  if (stopped) return;
   if (f) runFile(f.name, await f.text(), { program: f.name.replace(/\.pyw?$/i, ''), isolated: true });
 });
 
@@ -804,18 +1147,20 @@ $('btn-demo').onclick = () => whenIdle(() => runSource('await demo()'));
 $('btn-open').onclick = () => openScript();
 $('btn-save').onclick = () => saveTranscript();
 $('btn-stop').onclick = () => {
-  if (statusText.textContent.startsWith('Stopping')) hardRestart('Stopped — Python was restarted, so variables were cleared.');
+  if (statusText.textContent.startsWith('Stopping')) hardRestart('Stopped — Python was restarted, so variables were cleared.', true);
   else interrupt();
 };
 
 async function copySession() {
+  if (stopped) return;
   try {
     await navigator.clipboard.writeText(term.getText());
     flashLabel('btn-copy', 'Copied');
   } catch {}
 }
 $('btn-copy').onclick = copySession;
-$('btn-restart').onclick = restartPython;
+$('btn-restart').onclick = restartAny;
+$('stopped-restart').onclick = restartFromStopped;
 
 const help = $('help');
 const openHelp = () => { help.classList.remove('hidden'); help.classList.add('flex'); };
@@ -829,29 +1174,30 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !help.cl
 function setupMenubar() {
   if (!inPuter) return;
   const idle = (fn) => () => whenIdle(fn);
+  const live = (fn) => () => { if (!stopped) fn(); }; // after "onexit": "stop" only Restart works
   try {
     P.ui.setMenubar({
       items: [
         { label: 'File', items: [
-          { label: 'Open Script…', action: openScript },
-          { label: 'Upload Files…', action: () => uploader.open() },
-          { label: 'Save Transcript…', action: saveTranscript },
+          { label: 'Open Script…', action: live(openScript) },
+          { label: 'Upload Files…', action: live(() => uploader.open()) },
+          { label: 'Save Transcript…', action: live(saveTranscript) },
           '-',
           { label: 'Quit', action: () => P.exit() },
         ] },
         { label: 'Edit', items: [
-          { label: 'Copy Session', action: copySession },
-          { label: 'Clear Screen', action: () => clearScreen() },
+          { label: 'Copy Session', action: live(copySession) },
+          { label: 'Clear Screen', action: live(() => clearScreen()) },
         ] },
         { label: 'Python', items: [
           { label: 'Stop', action: interrupt },
-          { label: 'Restart Interpreter', action: restartPython },
+          { label: 'Restart Interpreter', action: restartAny },
           { label: 'Run Demo', action: idle(() => runSource('await demo()')) },
         ] },
         { label: 'Programs', items: [
-          ...programs.map((p) => ({ label: p.title, action: () => launchProgram(p.id) })),
+          ...programs.map((p) => ({ label: p.title, action: live(() => launchProgram(p.id)) })),
           '-',
-          { label: 'Run a .py file as a program…', action: () => $('program-input').click() },
+          { label: 'Run a .py file as a program…', action: live(() => $('program-input').click()) },
         ] },
         { label: 'View', items: [
           { label: 'Larger Text', action: () => $('btn-font-up').click() },
@@ -906,16 +1252,37 @@ function pythonReady(info) {
   $('fs-badge').classList.toggle('hidden', !info.persist);
   setStatus('ready');
   fit();
-  if (!booted) { booted = true; banner(info); }
-  else if (!restartPending) write('Python restarted.\n', 'info');
+  // start-up program: ?program=<id> in the address, else the first one with "autoplay": true
+  let start = null;
+  if (!booted) {
+    booted = true;
+    start = startupProgram();
+    if (start) bannerPending = info; // the banner appears when the program returns to Python
+    else banner(info);
+  } else if (!restartPending) write('Python restarted.\n', 'info');
+  else if (relaunch) { start = relaunch; }
+  relaunch = null;
   restartPending = false;
   continuing = false;
   setPrompt(PS1);
-  showInput(true);
-  const param = new URLSearchParams(location.search).get('program');
-  if (param && !pythonReady.launched) { pythonReady.launched = true; launchProgram(param); }
+  if (start) {
+    launchProgram(start, { autoplay: true, quiet: true }).then((ok) => {
+      if (ok) return;
+      if (bannerPending) { const i = bannerPending; bannerPending = null; banner(i); }
+      if (ready && !busy && !stopped) showInput(true);
+    });
+  } else {
+    showInput(true);
+  }
   flushDeferredLog();
   drainQueue();
+}
+
+function startupProgram() {
+  const param = new URLSearchParams(location.search).get('program');
+  if (param) return param;
+  const auto = programs.find((p) => p.autoplay === true);
+  return auto ? auto.id : null;
 }
 
 window.addEventListener('beforeunload', () => engine.flushFs());

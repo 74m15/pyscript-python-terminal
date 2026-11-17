@@ -23,9 +23,11 @@ PyTerm is a static, client-side application. There is no build step, no server-s
 │ Main thread                                                                  │
 │   index.html ── layout, CSS, dialogs                                         │
 │   app.js ───── UI controller (input line, input() prompts, history,          │
-│     │           completion, toolbar, Programs menu, drag & drop)             │
+│     │           completion, toolbar, Programs menu, drag & drop,             │
+│     │           autoplay / onexit, requests from Python, sign-in dialog)     │
 │     ├── terminal.js ── Terminal: parser → screen buffers → DOM renderer      │
 │     ├── upload.js ──── Upload dialog                                         │
+│     ├── sso.js ─────── Google Identity Services + Microsoft MSAL tokens      │
 │     └── engine.js ──── PythonEngine ──┐                                      │
 │                         postMessage    │  (+ SharedArrayBuffer when          │
 │                                        │     the page is cross-origin        │
@@ -34,7 +36,8 @@ PyTerm is a static, client-side application. There is no build step, no server-s
 │     │             IDBFS mount for ~/browser, request queue                   │
 │     ├── pyterm_host (JS module registered in Python)                         │
 │     ├── repl.py ── SafeConsole, input()/stdin, scripts, uploads, demo()      │
-│     └── ~/.pyterm/pyterm.py (from pyterm_lib.py) ── helpers for programs     │
+│     └── ~/.pyterm/pyterm/ (from pylib/pyterm/) ── the pyterm package:        │
+│           console, packages, programs, sso, _bridge (requests to the page)   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,18 +55,26 @@ The page and the worker talk only with `postMessage` (see [Python Bridge](python
 - Creates the `Terminal` and the `PythonEngine`, and routes worker output to the terminal.
 - REPL input: submit, line-by-line feeding of pasted code, auto-indent, history, Tab completion, Ctrl+C / Ctrl+L, smart Backspace.
 - `input()` requests: shows the program's own prompt (the text already on the cursor line), password mode, per-program history and completion words, Ctrl+D (EOF), Ctrl+C (KeyboardInterrupt), multi-line paste queue.
-- Stop / restart, scripts and programs (`runFile`), the Programs menu and `?program=` links, drag & drop, Open/Save/download, Puter menu bar, status and sizing.
+- Stop / restart, scripts and programs (`runFile`), the Programs menu, `?program=` links and `autoplay`, the `onexit: "stop"` state (everything locked except Restart), drag & drop, Open/Save/download, Puter menu bar, status and sizing.
+- Requests from Python (`rpcHandlers`: `programs.*`, and `sso.*` from `sso.js`), the sign-in dialog and renewal notices.
+
+### `sso.js`: sign-in
+`createSSO({ui})` returns the `sso.*` request handlers: Google Identity Services token client and Microsoft MSAL (`PublicClientApplication`, silent refresh, pop-up). It reads `sso.json` and asks `app.js` (the `ui` object) to show the dialog whose click opens the provider's pop-up. See [Sign-in](sso.md).
+
+### `auth/redirect.html`
+The page the Microsoft sign-in pop-up returns to; MSAL reads the result from it and closes it.
 
 ### `engine.js`: `PythonEngine`
 - Starts (and restarts) the worker; creates the shared interrupt and stdin buffers when `crossOriginIsolated` is true.
 - `call(type, payload)` → Promise, matched by request id.
-- `reply(text, status)` answers an `input()` request, `sendInterrupt()`, `resize()`, `flushFs()`.
+- `reply(text, status)` answers an `input()` request, `rpcReply(req, value, blobs, error)` answers a request from Python, `sendInterrupt()`, `resize()`, `flushFs()`.
 
 ### `py-worker.js`: the worker
 - Loads Pyodide 314.0.7 with `HOME=/home/pyodide`, `TERM`, `COLORTERM`.
 - Batches stdout/stderr into `out` messages (at most one every ~12 ms, or 64 KB).
 - Mounts `/home/pyodide/browser` on IDBFS and syncs it.
-- Registers the `pyterm_host` module, installs `pyterm.py`, runs `repl.py` and keeps references to its functions.
+- Registers the `pyterm_host` module, installs the `pyterm` package (`pylib/pyterm/*.py` → `~/.pyterm/pyterm/`), runs `repl.py` and keeps references to its functions.
+- Forwards `rpc` requests from Python to the page and resolves them with `rpc_result`; Stop cancels pending ones.
 - Runs requests one at a time (promise chain); `input_reply`, `interrupt`, `size` and `flush_fs` are handled immediately, even while code runs.
 
 ### `repl.py`: Python side
@@ -71,8 +82,18 @@ The page and the worker talk only with `postMessage` (see [Python Bridge](python
 - Replaces `input`, `sys.stdin`, `getpass.getpass` and `time.sleep` with worker-aware versions.
 - Runs staged scripts and programs, implements `run()`, uploads, archive extraction, `tree()` and downloads.
 
-### `pyterm_lib.py`: the `pyterm` module
-Helpers for user programs (`input` with completions/password/history, `ainput`, `confirm`, `choose`, `table`, `style`, `download`, `App`, `run`). See [Custom Programs](custom-programs.md).
+### `pylib/pyterm/`: the `pyterm` package
+
+| Module | Contents |
+|---|---|
+| `console.py` | Helpers for user programs (`input` with completions/password/history, `ainput`, `confirm`, `choose`, `table`, `style`, `download`, `App`, `run`) |
+| `packages.py` | `ainstall` / `require` (micropip with progress) |
+| `programs.py` | `list`, `find`, `prepare` for the programs of `programs/index.json` |
+| `sso.py` | Google / Microsoft sign-in and tokens |
+| `_bridge.py` | `acall(name, args)`: requests to the page |
+| `__init__.py` | Re-exports `console` (and `ainstall`/`require`) so `pyterm.input(...)` keeps working |
+
+See [Custom Programs](custom-programs.md#the-pyterm-package) and [Sign-in](sso.md).
 
 ### `upload.js`: Upload dialog
 File, folder and Puter Drive pickers, drop zone with folder traversal, archive detection by magic bytes, destination and conflict policy, progress, summary in the terminal.
@@ -93,11 +114,13 @@ index.html parsed
                 ├─ loadPyodide(), setStdout/setStderr, setInterruptBuffer (if shared)
                 ├─ status "Opening your browser folder…": mount IDBFS, syncfs(populate)
                 ├─ status "Loading the standard library…"
-                ├─ registerJsModule('pyterm_host'), write ~/.pyterm/pyterm.py
+                ├─ registerJsModule('pyterm_host'), write ~/.pyterm/pyterm/*.py
                 ├─ runPython(repl.py)
                 └─ postMessage {ready, version, persist, shared, interrupt, jspi}
-                     └─ app.js: remove loader, status Ready, banner, prompt,
-                        launch ?program=… if present, run queued actions
+                     └─ app.js (after programs/index.json is loaded): remove loader, status Ready;
+                        ?program=… or the first "autoplay": true program → start it
+                        (banner postponed until it returns), otherwise banner + prompt;
+                        run queued actions
 ```
 
 ## Input → execution → output
@@ -183,6 +206,8 @@ The size goes to `term.resize()` and to the worker (`{type:'size'}`), which sets
 | Files in `/home/pyodide/browser` | IndexedDB (Emscripten IDBFS) | Until the site's browser data is cleared |
 | Other files (`~/Upload`, …) | Pyodide's in-memory file system | Until reload or hard restart |
 | Python variables | Worker memory | Until Restart, `exit()`, hard stop or reload |
+| Google access token | Page memory | Until expiry, `sso.logout()` or reload |
+| Microsoft accounts and tokens | `sessionStorage` (MSAL cache) | Browser tab session |
 | Packages | Worker memory | Until reload or hard restart |
 
 PyTerm has no backend and stores nothing on any server.
@@ -195,4 +220,6 @@ PyTerm has no backend and stores nothing on any server.
 | Puter.js v2 | `js.puter.com/v2/` | Desktop integration (menu bar, file pickers, window title) |
 | Tailwind CSS | `cdn.tailwindcss.com` | Utility classes for layout |
 | Lucide | `cdn.jsdelivr.net/npm/lucide@latest/+esm` | Toolbar icons |
+| Google Identity Services | `accounts.google.com/gsi/client` | Google sign-in (loaded on first use) |
+| MSAL Browser 4.30 | `cdn.jsdelivr.net/npm/@azure/msal-browser@4.30.0/+esm` | Microsoft sign-in (loaded on first use) |
 | Google Fonts | Inter, JetBrains Mono | UI and terminal fonts |

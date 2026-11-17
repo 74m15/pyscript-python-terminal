@@ -1,8 +1,11 @@
 // Main-thread side of the Python worker (py-worker.js).
 //
 // Messages page → worker: init, push, complete, reset_buffer, restart, run_file, save, extract,
-//   tree, read, sync (all answered with {type:'result', id}), plus input_reply, interrupt, size, flush_fs.
-// Messages worker → page: status, ready, fatal, out, clear, title, input, progress, download, result.
+//   tree, read, sync (all answered with {type:'result', id}), plus input_reply, interrupt, size,
+//   flush_fs and rpc_result.
+// Messages worker → page: status, ready, fatal, out, clear, title, input, progress, download, result,
+//   rpc (Python asks the page for something: answer with rpcReply), rpc_cancel (Stop pressed while
+//   a request was pending) and event (one-way notifications from Python).
 
 const enc = new TextEncoder();
 const STDIN_BYTES = 1 << 20;
@@ -23,6 +26,7 @@ export class PythonEngine {
   start() {
     this.stop();
     this.info = null;
+    this.gen = (this.gen || 0) + 1; // answers to requests of an older worker are dropped
     const w = new Worker(new URL('./py-worker.js', import.meta.url), { type: 'module', name: 'pyterm-python' });
     this.worker = w;
     this.interrupt = null;
@@ -60,6 +64,18 @@ export class PythonEngine {
       case 'input': this.inputRequest = m; this.h.onInput && this.h.onInput(m); break;
       case 'ready': this.info = m; this.h.onReady && this.h.onReady(m); break;
       case 'fatal': this.h.onFatal && this.h.onFatal(m.message); break;
+      case 'rpc':
+        m.gen = this.gen;
+        if (this.h.onRpc) this.h.onRpc(m);
+        else this.rpcReply(m, null, [], { code: 'unsupported', message: `No handler for ${m.name}` });
+        break;
+      case 'rpc_cancel': this.h.onRpcCancel && this.h.onRpcCancel(m.rid); break;
+      case 'event': {
+        let data = null;
+        try { data = m.data ? JSON.parse(m.data) : null; } catch { data = m.data; }
+        this.h.onEvent && this.h.onEvent(m.name, data);
+        break;
+      }
       case 'result': {
         const p = this.pending.get(m.id);
         if (!p) return;
@@ -78,6 +94,22 @@ export class PythonEngine {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage({ type, id, ...payload }, transfer);
     });
+  }
+
+  /** Answer a request from Python (pyterm._bridge). `req` is the {type:'rpc'} message;
+   *  send a JSON-able value plus optional binary blobs, or an error {code, message}. */
+  rpcReply(req, value, blobs = [], error = null) {
+    if (!this.worker || !req || req.gen !== this.gen) return;
+    const rid = req.rid;
+    if (error) {
+      this.worker.postMessage({ type: 'rpc_result', rid, error: { code: String(error.code || 'error'), message: String(error.message || error) } });
+      return;
+    }
+    const bufs = (blobs || []).map((b) => (b instanceof ArrayBuffer ? b : new Uint8Array(b).slice().buffer));
+    let json;
+    try { json = JSON.stringify(value === undefined ? null : value); }
+    catch (e) { this.rpcReply(req, null, [], { code: 'error', message: 'Answer is not JSON: ' + e.message }); return; }
+    this.worker.postMessage({ type: 'rpc_result', rid, json, blobs: bufs }, bufs);
   }
 
   /** status: 1 = line, 2 = EOF (Ctrl+D), 3 = KeyboardInterrupt (Ctrl+C), 4 = StopProgram (Stop button) */
