@@ -1,23 +1,32 @@
-"""pyterm.programs — the programs listed in programs/index.json.
+"""pyterm.programs — the programs of the list in use (an index.json: the built-in
+programs/index.json, or one loaded from a URL).
 
     from pyterm import programs
     programs.list()                 # [{'id': 'calc', 'title': 'Calculator', ...}, ...]
     info = programs.prepare("calc") # download it (and its libraries) if missing, install packages
+    programs.load("https://example.org/my-programs/index.json")   # use another list
+    programs.source()               # {'url': ..., 'name': ..., 'builtin': False, 'count': 3, ...}
+    programs.load(None)             # back to the site's default list
 
 ``run("calc")`` at the prompt uses ``prepare()`` and then runs the program.
 """
 import os
+import shutil
 
 from . import _bridge
 from .console import _await
 
-__all__ = ["list", "alist", "find", "afind", "prepare", "aprepare"]
+__all__ = ["list", "alist", "find", "afind", "prepare", "aprepare", "load", "aload", "source", "asource", "LoadError"]
 
 _list = list
 
 
+class LoadError(Exception):
+    """The programs list could not be loaded (bad address, not reachable, CORS, not JSON, …)."""
+
+
 async def alist():
-    """The programs of programs/index.json: id, title, description, autoplay, onexit."""
+    """The programs of the list in use: id, title, description, autoplay, onexit."""
     return await _bridge.acall("programs.list")
 
 
@@ -50,7 +59,18 @@ async def aprepare(query, *, refresh=False, quiet=False, animate=True):
     """
     m = await afind(query)
     if not m:
-        raise LookupError(f"no program named {query!r} in programs/index.json")
+        src = await asource()
+        raise LookupError(f"no program named {query!r} in {src.get('name') or 'the programs list'}")
+    # ~/programs holds the files of one list at a time: another list's files are removed
+    marker = m.get("marker")
+    if marker and m.get("catalog"):
+        try:
+            with open(marker, encoding="utf-8") as fh:
+                same = fh.read().strip() == m["catalog"]
+        except OSError:
+            same = not os.path.isdir(os.path.dirname(marker))
+        if not same:
+            shutil.rmtree(os.path.dirname(marker), ignore_errors=True)
     missing = [f for f in m["files"] if not os.path.exists(f)]
     if refresh or missing:
         data, blobs = await _bridge.acall("programs.fetch", {"query": m["id"]}, binary=True)
@@ -85,3 +105,29 @@ async def aprepare(query, *, refresh=False, quiet=False, animate=True):
 def prepare(query, *, refresh=False, quiet=False):
     # no spinner task: with stack switching the event loop is busy waiting for us
     return _await(aprepare(query, refresh=refresh, quiet=quiet, animate=False))
+
+
+async def asource():
+    """Where the programs list comes from:
+    {"url", "base" (where its files are read), "name", "builtin", "via", "count"}.
+    ``via`` is one of default, html, config, query, ui, api, parent, python."""
+    return await _bridge.acall("programs.source")
+
+
+def source():
+    return _await(asource())
+
+
+async def aload(url=None):
+    """Use the index.json at ``url`` (a folder address gets ``index.json`` added; relative
+    addresses start at PyTerm's page). ``None`` goes back to the site's default list.
+    The Programs menu is updated and the choice is kept for this tab. Returns ``source()``.
+    Raises LoadError when the list can't be loaded (the current list stays in use)."""
+    try:
+        return await _bridge.acall("programs.load", {"url": None if url is None else str(url)})
+    except _bridge.BridgeError as e:
+        raise LoadError(str(e)) from None
+
+
+def load(url=None):
+    return _await(aload(url))

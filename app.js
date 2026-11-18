@@ -166,6 +166,10 @@ function banner(info) {
   write(', the Programs menu, or Upload to add files. ', 'info');
   if (info.persist) { write('~/browser', 'accent'); write(' keeps files after a reload.\n', 'info'); }
   else write('\n', 'info');
+  if (!catalog.builtin) {
+    write('Programs from ', 'info'); write(catalogLabel(), 'accent');
+    write(` (${programs.length} program${programs.length === 1 ? '' : 's'})\n`, 'info');
+  }
   if (!info.jspi && !info.shared) {
     write('Note: this browser can\'t pause Python for input() — use await pyterm.ainput() instead.\n', 'err');
   }
@@ -327,7 +331,9 @@ async function runFile(name, source, opts = {}) {
   let res = null;
   try {
     // install the program and its libraries in ~/programs, then run it with them on sys.path
-    if (files && files.length) await engine.call('write_files', { files }, files.map((f) => f.data));
+    if (files && files.length) {
+      await engine.call('write_files', { files, marker: MARKER, catalog: catalog.url }, files.map((f) => f.data));
+    }
     res = await engine.call('run_file', { name, source, isolated, paths, extra, requires });
   } catch (e) {
     if (!ready) return;
@@ -574,7 +580,8 @@ cmd.addEventListener('paste', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
-  const modal = !$('help').classList.contains('hidden') || uploader.isOpen() || !!ssoState;
+  const modal = !$('help').classList.contains('hidden') || uploader.isOpen() || !!ssoState
+    || !$('catalog').classList.contains('hidden') || !!trustState;
   if ((e.ctrlKey || e.metaKey) && key === 'o' && !modal) { e.preventDefault(); openScript(); }
   else if ((e.ctrlKey || e.metaKey) && key === 's' && !modal) { e.preventDefault(); saveTranscript(); }
   else if ((e.ctrlKey || e.metaKey) && key === 'u' && !modal) { e.preventDefault(); if (!stopped) uploader.open(); }
@@ -731,26 +738,153 @@ let programs = [];
 let libraries = [];
 const progMenu = $('programs-menu');
 
+/* ---------- programs list (index.json): built-in or from a URL ---------- */
+// Where the list comes from, first match wins:
+//   1. ?programs=<url> in the page address        (via 'query')
+//   2. the choice made in "Load programs from URL…" (via 'ui', kept for this tab)
+//   3. window.PYTERM_CONFIG = { programs: url }    (via 'config', set before app.js loads)
+//   4. <meta name="pyterm-programs" content=url>   (via 'html')
+//   5. programs/index.json next to PyTerm          (via 'default')
+// At run time: PyTerm.loadPrograms(url), postMessage from a parent page, pyterm.programs.load(url).
+// Program and library files are fetched relative to the index.json (or to its "base" field).
+const BUILTIN_INDEX = new URL('programs/index.json', location.href).href;
+const CATALOG_KEY = 'pyterm-programs-url';
+const RECENT_CATALOGS_KEY = 'pyterm-programs-recent';
+const MARKER = PROG_HOME + '/.catalog'; // which list the files in ~/programs came from
+let catalog = { url: BUILTIN_INDEX, base: new URL('./', BUILTIN_INDEX).href, name: '', via: 'default', builtin: true };
+let startupNotice = null;
+
+function siteDefaultCatalog() {
+  const cfg = (window.PYTERM_CONFIG && typeof window.PYTERM_CONFIG === 'object') ? window.PYTERM_CONFIG : {};
+  const fromJs = cfg.programs || cfg.programsUrl;
+  if (fromJs) return { url: String(fromJs), via: 'config' };
+  const meta = document.querySelector('meta[name="pyterm-programs"]');
+  const fromHtml = meta && (meta.getAttribute('content') || '').trim();
+  if (fromHtml) return { url: fromHtml, via: 'html' };
+  return { url: BUILTIN_INDEX, via: 'default' };
+}
+
+function launchCatalog() {
+  const q = new URLSearchParams(location.search).get('programs');
+  if (q) return { url: q, via: 'query' };
+  let saved = null;
+  try { saved = sessionStorage.getItem(CATALOG_KEY); } catch {}
+  if (saved) return { url: saved, via: 'ui' };
+  return siteDefaultCatalog();
+}
+
+// "https://x.org/progs/" → "https://x.org/progs/index.json"; relative addresses start at PyTerm's page
+function catalogUrl(url) {
+  let u;
+  try { u = new URL(String(url || '').trim(), location.href); } catch { throw new Error('this is not a valid address'); }
+  if (!/^https?:$/.test(u.protocol)) throw new Error('only http:// and https:// addresses can be used');
+  if (u.pathname.endsWith('/')) u.pathname += 'index.json';
+  return u;
+}
+
+async function fetchCatalog(url, via) {
+  const u = catalogUrl(url);
+  let r;
+  try { r = await fetch(u.href, { cache: 'no-cache' }); }
+  catch { throw new Error(`${u.host} could not be reached, or it doesn't let other sites read its files (CORS)`); }
+  if (!r.ok) throw new Error(`${u.href} answered ${r.status}${r.statusText ? ' ' + r.statusText : ''}`);
+  let data;
+  try { data = JSON.parse(await r.text()); } catch { throw new Error('the file is not valid JSON'); }
+  if (!data || typeof data !== 'object' || !Array.isArray(data.programs)) throw new Error('the file has no "programs" list');
+  return {
+    url: u.href,
+    base: new URL(typeof data.base === 'string' && data.base.trim() ? data.base.trim() : './', u).href,
+    name: typeof data.name === 'string' ? data.name.trim() : '',
+    via,
+    builtin: u.href === BUILTIN_INDEX,
+    programs: data.programs.filter((p) => p && typeof p === 'object' && p.id && p.file),
+    libraries: Array.isArray(data.libraries) ? data.libraries.filter((l) => l && typeof l === 'object') : [],
+  };
+}
+
+function catalogLabel(c = catalog) {
+  if (c.builtin) return 'Built-in programs';
+  if (c.name) return c.name;
+  try { const u = new URL(c.url); return u.host + u.pathname.replace(/\/index\.json$/i, ''); } catch { return c.url; }
+}
+
+function catalogInfo() {
+  return { url: catalog.url, base: catalog.base, name: catalogLabel(), builtin: catalog.builtin, via: catalog.via, count: programs.length };
+}
+
+function applyCatalog(c) {
+  catalog = { url: c.url, base: c.base, name: c.name, via: c.via, builtin: c.builtin };
+  programs = c.programs;
+  libraries = c.libraries;
+  renderProgramsMenu();
+  setupMenubar();
+  try { window.dispatchEvent(new CustomEvent('pyterm:programs', { detail: catalogInfo() })); } catch {}
+}
+
 async function loadPrograms() {
-  try {
-    const r = await fetch('programs/index.json', { cache: 'no-cache' });
-    const data = await r.json();
-    programs = (data.programs || []).filter((p) => p && p.id && p.file);
-    libraries = data.libraries || [];
-  } catch { programs = []; libraries = []; }
+  const want = launchCatalog();
+  const tried = new Set();
+  let loaded = false;
+  let firstError = null;
+  for (const c of [want, siteDefaultCatalog(), { url: BUILTIN_INDEX, via: 'default' }]) {
+    let key;
+    try { key = catalogUrl(c.url).href; } catch { key = c.url; }
+    if (tried.has(key)) continue;
+    tried.add(key);
+    try { applyCatalog(await fetchCatalog(c.url, c.via)); loaded = true; break; }
+    catch (e) { if (!firstError) firstError = `Could not load the programs list ${c.url}: ${e.message}`; }
+  }
+  if (!loaded) applyCatalog({ ...catalog, programs: [], libraries: [] });
+  if (firstError) {
+    if (want.via === 'ui') { try { sessionStorage.removeItem(CATALOG_KEY); } catch {} }
+    startupNotice = firstError + (loaded ? `. Using ${catalogLabel()} instead.` : '.');
+  }
+  return programs;
+}
+
+/* Switch to another list at run time. url null/'' = the site's default. Throws if it can't be loaded. */
+async function switchCatalog(url, via = 'api') {
+  await programsLoaded;
+  const reset = url == null || String(url).trim() === '';
+  const target = reset ? siteDefaultCatalog() : { url: String(url), via };
+  const c = await fetchCatalog(target.url, target.via);
+  applyCatalog(c);
+  if (via === 'ui' || via === 'python') {
+    // remembered for this tab, and the address bar keeps up (so a reload shows the same list)
+    try { if (reset) sessionStorage.removeItem(CATALOG_KEY); else sessionStorage.setItem(CATALOG_KEY, c.url); } catch {}
+    if (!reset && !c.builtin) rememberRecent(c.url);
+    const q = new URLSearchParams(location.search);
+    if (q.has('programs')) {
+      if (reset) q.delete('programs'); else q.set('programs', c.url);
+      const qs = q.toString();
+      try { history.replaceState(history.state, '', location.pathname + (qs ? '?' + qs : '') + location.hash); } catch {}
+    }
+  }
+  if (via !== 'python') logLine(`Programs: ${catalogLabel()} — ${programs.length} program${programs.length === 1 ? '' : 's'}\n`, 'info');
+  return catalogInfo();
+}
+
+function renderProgramsMenu() {
+  $('programs-source').textContent = catalogLabel();
+  $('programs-source').title = catalog.url;
   const list = $('programs-list');
   list.innerHTML = '';
+  if (!programs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'px-3 py-2 text-[12px] text-slate-500';
+    empty.textContent = 'No programs in this list.';
+    list.appendChild(empty);
+  }
   for (const p of programs) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'menu-item';
     b.innerHTML = '<span class="block text-[13px] text-slate-100"></span><span class="block text-[12px] text-slate-500 leading-snug mt-0.5"></span>';
-    b.children[0].textContent = p.title;
-    b.children[1].textContent = p.description;
+    b.children[0].textContent = p.title || p.id;
+    b.children[1].textContent = p.description || '';
     b.onclick = () => { closePrograms(); launchProgram(p.id); };
     list.appendChild(b);
   }
-  return programs;
 }
 const programsLoaded = loadPrograms();
 
@@ -772,9 +906,13 @@ function cleanRel(p) {
   return String(p || '').replace(/\\/g, '/').split('/').filter((s) => s && s !== '.' && s !== '..').join('/');
 }
 
+// Files are read relative to the list's folder (or its "base")
 async function fetchBytes(rel) {
-  const r = await fetch(`programs/${rel}`, { cache: 'no-cache' });
-  if (!r.ok) throw new Error(`programs/${rel} could not be loaded (${r.status})`);
+  const url = new URL(rel, catalog.base).href;
+  let r;
+  try { r = await fetch(url, { cache: 'no-cache' }); }
+  catch { throw new Error(`${url} could not be reached (network or CORS)`); }
+  if (!r.ok) throw new Error(`${url} could not be loaded (${r.status})`);
   return r.arrayBuffer();
 }
 
@@ -815,7 +953,7 @@ function programManifest(p) {
   return {
     id: p.id, title: p.title || p.id, description: p.description || '', path: L.progPath,
     files: [...L.jobs.map((j) => j.path), L.progPath], paths: L.paths, requires: L.requires,
-    onexit: onexitOf(p), autoplay: p.autoplay === true,
+    onexit: onexitOf(p), autoplay: p.autoplay === true, catalog: catalog.url, marker: MARKER,
   };
 }
 
@@ -831,6 +969,7 @@ async function prepareProgram(p) {
     return { path: j.path, data: datas[i] };
   });
   files.push({ path: L.progPath, data: srcBuf });
+  files.push({ path: MARKER, data: new TextEncoder().encode(catalog.url).buffer });
   return { name: L.progPath, src, files, paths: L.paths, extra, requires: L.requires };
 }
 
@@ -848,7 +987,7 @@ async function launchProgram(query, extra = {}) {
   await programsLoaded;
   if (stopped) return false;
   const p = findProgram(query);
-  if (!p) { logLine(`No program named ${query} in programs/index.json\n`, 'err'); return false; }
+  if (!p) { logLine(`No program named ${query} in ${catalogLabel()}\n`, 'err'); return false; }
   let prep;
   try { prep = await prepareProgram(p); }
   catch (e) { logLine(`Could not load ${p.title || p.id}: ${e && e.message || e}\n`, 'err'); return false; }
@@ -885,6 +1024,11 @@ const rpcHandlers = {
     if (!p) throw bridgeError('not_found', `no program named ${query}`);
     const prep = await prepareProgram(p);
     return new Binary({ files: prep.files.map((f) => f.path) }, prep.files.map((f) => f.data));
+  },
+  'programs.source': async () => { await programsLoaded; return catalogInfo(); },
+  'programs.load': async ({ url }) => {
+    try { return await switchCatalog(url == null ? null : String(url), 'python'); }
+    catch (e) { throw bridgeError('load_failed', (e && e.message) || String(e)); }
   },
 };
 
@@ -1124,6 +1268,163 @@ $('btn-programs').onclick = (e) => {
 };
 document.addEventListener('click', (e) => { if (!progMenu.contains(e.target)) closePrograms(); });
 $('programs-file').onclick = () => { closePrograms(); $('program-input').click(); };
+$('programs-url').onclick = () => openCatalog();
+
+/* ---------- "Load programs from URL…" dialog ---------- */
+const catalogDlg = $('catalog');
+function recentCatalogs() {
+  try { return JSON.parse(localStorage.getItem(RECENT_CATALOGS_KEY) || '[]').filter((s) => typeof s === 'string'); } catch { return []; }
+}
+function rememberRecent(url) {
+  const list = [url, ...recentCatalogs().filter((u) => u !== url)].slice(0, 6);
+  try { localStorage.setItem(RECENT_CATALOGS_KEY, JSON.stringify(list)); } catch {}
+}
+function showCatalogError(text) {
+  const el = $('catalog-error');
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
+}
+function setCatalogWorking(on) {
+  $('catalog-load').disabled = on;
+  $('catalog-reset').disabled = on || catalog.url === (() => { try { return catalogUrl(siteDefaultCatalog().url).href; } catch { return ''; } })();
+  $('catalog-url').disabled = on;
+  $('catalog-load-label').textContent = on ? 'Loading…' : 'Load';
+}
+function openCatalog() {
+  if (stopped) return;
+  closePrograms();
+  $('catalog-current').textContent = catalogLabel();
+  $('catalog-count').textContent = `${programs.length} program${programs.length === 1 ? '' : 's'}`;
+  $('catalog-current-url').textContent = catalog.url;
+  $('catalog-current-url').title = catalog.url;
+  $('catalog-url').value = catalog.builtin ? '' : catalog.url;
+  const recent = $('catalog-recent');
+  recent.innerHTML = '';
+  for (const u of recentCatalogs()) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip max-w-full truncate';
+    chip.textContent = catalogLabel({ url: u, builtin: false, name: '' });
+    chip.title = u;
+    chip.onclick = () => { $('catalog-url').value = u; $('catalog-url').focus(); };
+    recent.appendChild(chip);
+  }
+  showCatalogError('');
+  setCatalogWorking(false);
+  catalogDlg.classList.remove('hidden');
+  catalogDlg.classList.add('flex');
+  setTimeout(() => { $('catalog-url').focus(); $('catalog-url').select(); }, 0);
+}
+function closeCatalog() {
+  catalogDlg.classList.add('hidden');
+  catalogDlg.classList.remove('flex');
+  if (inputReq || (ready && !busy)) cmd.focus({ preventScroll: true });
+}
+async function submitCatalog(url) {
+  showCatalogError('');
+  setCatalogWorking(true);
+  try {
+    await switchCatalog(url, 'ui');
+    closeCatalog();
+  } catch (e) {
+    showCatalogError(`Could not load the list: ${(e && e.message) || e}`);
+  } finally {
+    setCatalogWorking(false);
+  }
+}
+$('catalog-load').onclick = () => {
+  const v = $('catalog-url').value.trim();
+  if (!v) { showCatalogError('Enter the address of an index.json file, or of the folder that contains it.'); return; }
+  submitCatalog(v);
+};
+$('catalog-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('catalog-load').click(); } });
+$('catalog-reset').onclick = () => submitCatalog(null);
+$('catalog-cancel').onclick = closeCatalog;
+$('catalog-close').onclick = closeCatalog;
+catalogDlg.addEventListener('click', (e) => { if (e.target === catalogDlg) closeCatalog(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !catalogDlg.classList.contains('hidden')) closeCatalog(); });
+
+/* ---------- autoplay from a list on another site (?programs=…) needs the user's OK ---------- */
+const TRUSTED_KEY = 'pyterm-trusted-origins';
+const trustedNow = new Set();
+let trustState = null;
+function trustedOrigins() {
+  try { return JSON.parse(localStorage.getItem(TRUSTED_KEY) || '[]').filter((s) => typeof s === 'string'); } catch { return []; }
+}
+function untrustedOrigins() {
+  if (catalog.via !== 'query') return []; // lists set by the site itself (HTML / JS) or by the user are trusted
+  const found = new Set();
+  for (const u of [catalog.url, catalog.base]) { try { found.add(new URL(u).origin); } catch {} }
+  const ok = new Set([location.origin, ...trustedOrigins(), ...trustedNow]);
+  return [...found].filter((o) => !ok.has(o));
+}
+function askTrust(p, origins) {
+  return new Promise((resolve) => {
+    trustState = { resolve, origins };
+    const hosts = origins.map((o) => { try { return new URL(o).host; } catch { return o; } }).join(', ');
+    $('trust-title').textContent = `Start “${p.title || p.id}”?`;
+    $('trust-host').textContent = hosts;
+    $('trust-remember').checked = false;
+    $('trust-remember-label').textContent = `Always trust ${hosts}`;
+    const dlg = $('trust');
+    dlg.classList.remove('hidden');
+    dlg.classList.add('flex');
+    setTimeout(() => $('trust-cancel').focus(), 0);
+  });
+}
+function finishTrust(ok) {
+  const st = trustState;
+  if (!st) return;
+  trustState = null;
+  const dlg = $('trust');
+  dlg.classList.add('hidden');
+  dlg.classList.remove('flex');
+  if (ok) {
+    st.origins.forEach((o) => trustedNow.add(o));
+    if ($('trust-remember').checked) {
+      try { localStorage.setItem(TRUSTED_KEY, JSON.stringify([...new Set([...trustedOrigins(), ...st.origins])])); } catch {}
+    }
+  }
+  st.resolve(ok);
+}
+$('trust-run').onclick = () => finishTrust(true);
+$('trust-cancel').onclick = () => finishTrust(false);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && trustState) finishTrust(false); });
+
+/* ---------- JavaScript API for pages that embed or extend PyTerm ---------- */
+let resolveReady;
+const pytermReady = new Promise((r) => { resolveReady = r; });
+window.PyTerm = Object.freeze({
+  /** Resolves with {version, …} when Python is ready the first time. */
+  ready: pytermReady,
+  /** Address of the programs list in use. */
+  get programsUrl() { return catalog.url; },
+  /** {url, base, name, builtin, via, count} of the list in use. */
+  programsSource: async () => { await programsLoaded; return catalogInfo(); },
+  /** Use the index.json at `url` (or the site's default with null). Resolves with programsSource(). */
+  loadPrograms: (url) => switchCatalog(url == null ? null : String(url), 'api'),
+  resetPrograms: () => switchCatalog(null, 'api'),
+  /** The programs of the list: [{id, title, description, autoplay, onexit}] */
+  listPrograms: async () => {
+    await programsLoaded;
+    return programs.map((p) => ({ id: p.id, title: p.title || p.id, description: p.description || '', autoplay: p.autoplay === true, onexit: onexitOf(p) }));
+  },
+  /** Start a program (id, title or file), like the Programs menu. Resolves false if it couldn't start. */
+  launch: (query) => launchProgram(String(query)),
+});
+
+// A page that shows PyTerm in an <iframe> can switch the list:
+//   frame.contentWindow.postMessage({ type: 'pyterm:load-programs', url }, '*')
+// and gets back { type: 'pyterm:programs-loaded', ok, url, name, count, error }.
+window.addEventListener('message', async (e) => {
+  const m = e.data;
+  if (!m || typeof m !== 'object' || m.type !== 'pyterm:load-programs') return;
+  if (window.parent === window || e.source !== window.parent) return;
+  let reply;
+  try { reply = { type: 'pyterm:programs-loaded', ok: true, ...(await switchCatalog(m.url == null ? null : String(m.url), 'parent')) }; }
+  catch (err) { reply = { type: 'pyterm:programs-loaded', ok: false, url: m.url == null ? null : String(m.url), error: (err && err.message) || String(err) }; }
+  try { e.source.postMessage(reply, e.origin && e.origin !== 'null' ? e.origin : '*'); } catch {}
+});
 $('program-input').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -1195,9 +1496,10 @@ function setupMenubar() {
           { label: 'Run Demo', action: idle(() => runSource('await demo()')) },
         ] },
         { label: 'Programs', items: [
-          ...programs.map((p) => ({ label: p.title, action: live(() => launchProgram(p.id)) })),
+          ...programs.map((p) => ({ label: p.title || p.id, action: live(() => launchProgram(p.id)) })),
           '-',
           { label: 'Run a .py file as a program…', action: live(() => $('program-input').click()) },
+          { label: 'Load Programs from URL…', action: live(openCatalog) },
         ] },
         { label: 'View', items: [
           { label: 'Larger Text', action: () => $('btn-font-up').click() },
@@ -1256,6 +1558,7 @@ function pythonReady(info) {
   let start = null;
   if (!booted) {
     booted = true;
+    if (startupNotice) { write(startupNotice + '\n', 'err'); startupNotice = null; }
     start = startupProgram();
     if (start) bannerPending = info; // the banner appears when the program returns to Python
     else banner(info);
@@ -1265,17 +1568,22 @@ function pythonReady(info) {
   restartPending = false;
   continuing = false;
   setPrompt(PS1);
-  if (start) {
-    launchProgram(start, { autoplay: true, quiet: true }).then((ok) => {
-      if (ok) return;
-      if (bannerPending) { const i = bannerPending; bannerPending = null; banner(i); }
-      if (ready && !busy && !stopped) showInput(true);
-    });
-  } else {
-    showInput(true);
-  }
+  if (start) startAutoplay(start);
+  else showInput(true);
   flushDeferredLog();
   drainQueue();
+  resolveReady(info);
+}
+
+async function startAutoplay(query) {
+  const p = findProgram(query);
+  const origins = p ? untrustedOrigins() : [];
+  const allowed = !origins.length || await askTrust(p, origins);
+  const ok = allowed && await launchProgram(query, { autoplay: true, quiet: true });
+  if (ok) return;
+  if (bannerPending) { const i = bannerPending; bannerPending = null; banner(i); }
+  if (!allowed) logLine(`${p.title || p.id} was not started. Start it from the Programs menu or with run("${p.id}").\n`, 'info');
+  if (ready && !busy && !stopped) showInput(true);
 }
 
 function startupProgram() {

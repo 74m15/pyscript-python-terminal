@@ -14,6 +14,7 @@ Common changes and where to make them. All files are plain source; reload the pa
 - [Bell](#bell)
 - [Adding REPL helpers](#adding-repl-helpers)
 - [Adding programs](#adding-programs)
+- [Programs list from another site](#programs-list-from-another-site)
 - [Start-up program](#start-up-program)
 - [Extending the pyterm package](#extending-the-pyterm-package)
 - [Sign-in providers](#sign-in-providers)
@@ -153,6 +154,22 @@ Helpers are added again after every Restart. Helpers meant for programs belong i
 ## Adding programs
 
 Put a `.py` file in `programs/` and list it in `programs/index.json` (`id`, `file`, `title`, `description`). It appears in the toolbar menu and in the Puter menu bar automatically. Details in [Custom Programs](custom-programs.md#adding-a-program-to-the-programs-menu).
+
+## Programs list from another site
+
+To make a copy of PyTerm show programs hosted elsewhere, set the list's address in `index.html`, either as HTML:
+
+```html
+<meta name="pyterm-programs" content="https://example.org/my-programs/index.json" />
+```
+
+or as JavaScript, before `app.js` is loaded:
+
+```html
+<script>window.PYTERM_CONFIG = { programs: "https://example.org/my-programs/" };</script>
+```
+
+Users can still pick another list with **Programs → Load programs from URL…** or `?programs=<url>`, and go back to yours with **Default list**. At run time use `PyTerm.loadPrograms(url)` (JavaScript), the `pyterm:load-programs` message (embedding page) or `pyterm.programs.load(url)` (Python). All the details, including CORS and the confirmation before a start-up program from another site runs, are in [Custom Programs](custom-programs.md#loading-the-programs-list-from-a-url). The loading code is the *programs list* section of `app.js` (`launchCatalog`, `fetchCatalog`, `switchCatalog`).
 
 ## Start-up program
 

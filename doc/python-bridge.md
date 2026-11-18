@@ -44,7 +44,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `reset_buffer` | — | — | Drops a half-typed block |
 | `restart` | — | — | New console and namespace |
 | `run_file` | `name`, `source`, `isolated`, `paths` (import paths), `extra` (library sources, for package loading), `requires` (packages to install with micropip first) | like `push` | See [Running scripts](#running-scripts-and-programs) |
-| `write_files` | `files: [{path, data}]` (ArrayBuffers, transferred) | number of files | Installs a program and its libraries in `~/programs` |
+| `write_files` | `files: [{path, data}]` (ArrayBuffers, transferred), `marker`, `catalog` | number of files | Installs a program and its libraries in `~/programs`. If `marker` (`~/programs/.catalog`) names another list than `catalog`, `~/programs` is emptied first |
 | `save` | `path`, `data` (ArrayBuffer, transferred), `policy` | final path or `null` (skipped) | Upload of one file |
 | `extract` | `name`, `data`, `dest`, `policy`, `subfolder` | `{dest, files, skipped, renamed, blocked, kind}` | ZIP / tar extraction |
 | `tree` | `path`, `limit` | — | Prints a coloured tree |
@@ -124,8 +124,10 @@ data = _bridge.call("sso.status")                                  # sync, needs
 | Request | Args | Answer |
 |---|---|---|
 | `programs.list` | — | `[{id, title, description, file, uses, requires, autoplay, onexit}]` |
-| `programs.manifest` | `query` (id, title or file) | manifest `{id, title, description, path, files, paths, requires, onexit, autoplay}` or `null` |
-| `programs.fetch` | `query` | `{files: [path…]}` + one blob per file |
+| `programs.manifest` | `query` (id, title or file) | manifest `{id, title, description, path, files, paths, requires, onexit, autoplay, catalog, marker}` or `null` |
+| `programs.fetch` | `query` | `{files: [path…]}` + one blob per file (read relative to the list's `base`) |
+| `programs.source` | — | `{url, base, name, builtin, via, count}` of the list in use |
+| `programs.load` | `url` (or `null` for the default list) | same as `programs.source`; error code `load_failed` |
 | `sso.login`, `sso.token`, `sso.logout`, `sso.status`, `sso.configure` | see [Sign-in](sso.md) | token dicts / status |
 
 ### Adding a feature
@@ -250,3 +252,18 @@ Python runs in a **worker**, so `js` refers to the worker's global scope: `fetch
 ```
 
 Network requests follow the browser's CORS rules.
+
+## The page's JavaScript API
+
+`app.js` exposes `window.PyTerm` for scripts in PyTerm's page:
+
+| Member | Description |
+|---|---|
+| `ready` | Promise resolved with the `ready` info when Python is up the first time |
+| `programsUrl` | Address of the programs list in use |
+| `programsSource()` | `{url, base, name, builtin, via, count}` |
+| `loadPrograms(url)` / `resetPrograms()` | Switch the programs list / back to the site's default |
+| `listPrograms()` | `[{id, title, description, autoplay, onexit}]` |
+| `launch(query)` | Start a program like the Programs menu; resolves `false` if it couldn't start |
+
+The `pyterm:programs` window event fires on every list change. A parent page can send `{type: 'pyterm:load-programs', url}` with `postMessage` and gets `{type: 'pyterm:programs-loaded', ok, …}` back. Start-up options: `window.PYTERM_CONFIG = { programs: url }` or `<meta name="pyterm-programs" content=url>`. See [Custom Programs](custom-programs.md#loading-the-programs-list-from-a-url).

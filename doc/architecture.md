@@ -107,7 +107,9 @@ State-machine parser, normal and alternate buffers, scroll region, tab stops, mo
 index.html parsed
  └─ app.js module
       ├─ new Terminal(#output), ResizeObserver + fit()
-      ├─ new PythonEngine(handlers), Programs menu loaded from programs/index.json
+      ├─ new PythonEngine(handlers), Programs menu loaded from the programs list
+      │    (?programs= → tab choice → PYTERM_CONFIG → <meta name="pyterm-programs"> → programs/index.json;
+      │     falls back to the next one if it can't be loaded)
       └─ engine.start()
            └─ new Worker('py-worker.js', {type:'module'})  ── postMessage {init, cols, rows, [SABs]}
                 ├─ status "Downloading the Python runtime…"  → loader text

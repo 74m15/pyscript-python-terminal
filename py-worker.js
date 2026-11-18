@@ -233,6 +233,20 @@ async function init(m) {
   }
 }
 
+function removeTree(path) {
+  try {
+    const st = py.FS.lstat(path);
+    if (py.FS.isDir(st.mode)) {
+      for (const n of py.FS.readdir(path)) if (n !== '.' && n !== '..') removeTree(`${path}/${n}`);
+      py.FS.rmdir(path);
+    } else {
+      py.FS.unlink(path);
+    }
+  } catch (e) {
+    console.warn('PyTerm: could not remove', path, e);
+  }
+}
+
 /* ---------- requests ---------- */
 function toPlain(v) {
   if (v && typeof v === 'object' && typeof v.toJs === 'function') {
@@ -280,6 +294,13 @@ async function handle(m) {
       }
       case 'write_files': {
         // install program / library files fetched by the page: [{path, data(ArrayBuffer)}]
+        // ~/programs holds one programs list at a time: files of another list are removed first
+        if (m.marker && m.catalog) {
+          let prev = null;
+          try { prev = dec.decode(py.FS.readFile(m.marker)).trim(); } catch {}
+          const dir = m.marker.slice(0, m.marker.lastIndexOf('/'));
+          if (prev !== m.catalog && py.FS.analyzePath(dir).exists) removeTree(dir);
+        }
         for (const f of m.files || []) {
           const dir = f.path.slice(0, f.path.lastIndexOf('/'));
           if (dir) py.FS.mkdirTree(dir);

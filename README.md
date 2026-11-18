@@ -38,6 +38,7 @@ Your name? Ada
 - **`requires`**: programs and libraries can list PyPI packages in `programs/index.json`; PyTerm installs them with micropip before launch, with progress in the terminal (`pyterm.ainstall()` / `pyterm.require()` do the same from code).
 - Run any `.py` file as a program (fresh namespace, `input()`, Ctrl+D to leave), or link to one with `?program=<id>`.
 - **`run("calc")`** starts a program of the menu from Python by id or title, setting it up exactly like the menu (files, libraries, packages).
+- **Programs list from a URL**: use the `index.json` of another site with *Programs → Load programs from URL…*, `?programs=<url>`, `<meta name="pyterm-programs">` / `window.PYTERM_CONFIG` in HTML, `PyTerm.loadPrograms(url)` in JavaScript or `pyterm.programs.load(url)` in Python.
 - **`autoplay`** starts a program when PyTerm opens; **`onexit`** chooses what happens when it ends: back to the `>>>` prompt (`continue`) or Python stops and only Restart is possible (`stop`).
 - The bundled **`pyterm` package** makes command-line apps easy: `pyterm.console` (commands with help, Tab completion, history, colours, tables, yes/no questions and menus), `pyterm.packages`, `pyterm.programs`. See [doc/custom-programs.md](doc/custom-programs.md).
 

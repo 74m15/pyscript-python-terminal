@@ -12,6 +12,7 @@ PyTerm can run **interactive terminal programs**: anything that reads what you t
 - [Keys inside a program](#keys-inside-a-program)
 - [Saving data between visits](#saving-data-between-visits)
 - [Adding a program to the Programs menu](#adding-a-program-to-the-programs-menu)
+- [Loading the programs list from a URL](#loading-the-programs-list-from-a-url)
 - [Shared libraries](#shared-libraries)
 - [Packages from PyPI (`requires`)](#packages-from-pypi-requires)
 - [Tips and limits](#tips-and-limits)
@@ -103,7 +104,7 @@ Saved note #1
 
 | How | What happens |
 |---|---|
-| **Programs** menu → a program | Runs one of the programs of `programs/index.json` |
+| **Programs** menu → a program | Runs one of the programs of the list in use (`programs/index.json`, or one [loaded from a URL](#loading-the-programs-list-from-a-url)) |
 | `run("calc")` at the `>>>` prompt or from code | The same as the menu, by **id, title or file name** (`run("Calculator")`, `run("calc.py")`): downloads the program and its libraries into `~/programs` if missing, loads the Pyodide packages they import, installs `requires`, then runs it. Extra arguments go to `sys.argv`: `run("screensaver", "matrix")` |
 | **Programs** → *Run a .py file as a program…* | Pick a file from your computer |
 | `run("folder/app.py", "arg1", "arg2")` | Runs a file already in Python's file system (for example one you uploaded); `sys.argv` gets the arguments |
@@ -150,7 +151,7 @@ With `"stop"`, the program "ends" in every case: it returns, calls `sys.exit()`,
 |---|---|
 | `pyterm.console` | Terminal I/O: `input`/`ainput`, `confirm`, `choose`, `table`, `style`, `clear`, `title`, `download`, `App`, `run`, `StopProgram`, colour constants (described below) |
 | `pyterm.packages` | `ainstall`, `require`, `installed_version` — [packages from PyPI](#packages-from-pypi-requires) |
-| `pyterm.programs` | The programs of `programs/index.json`: `list()`, `find(query)`, `prepare(query, refresh=False)` (async twins `alist`, `afind`, `aprepare`) |
+| `pyterm.programs` | The programs of the list in use: `list()`, `find(query)`, `prepare(query, refresh=False)`, `load(url)`, `source()` (async twins `alist`, `afind`, `aprepare`, `aload`, `asource`) |
 | `pyterm.sso` | Google / Microsoft sign-in and OAuth access tokens — see [Sign-in](sso.md) |
 
 Everything in `pyterm.console`, plus `ainstall` and `require`, is also available directly on `pyterm` (`pyterm.input`, `pyterm.App`, …), so older programs keep working. Both styles are fine:
@@ -174,6 +175,8 @@ tok = sso.login("google")
 >>> m["path"], m["requires"], m["onexit"]
 ('/home/pyodide/programs/banner.py', ['pyfiglet'], 'continue')
 ```
+
+`load(url)` switches to another programs list (see [Loading the programs list from a URL](#loading-the-programs-list-from-a-url)); `load(None)` goes back to the site's default. `source()` tells which list is in use: `{"url", "base", "name", "builtin", "via", "count"}`. A list that can't be loaded raises `programs.LoadError` and the current list stays in use.
 
 `find()` returns the program's **manifest** (or `None`): `id`, `title`, `description`, `path`, `files` (every file of the program and its libraries in Python's file system), `paths` (import paths), `requires`, `onexit`, `autoplay`. `prepare()` downloads what is missing (or everything with `refresh=True`), loads Pyodide packages, installs `requires` and returns the manifest; it raises `LookupError` for an unknown program. `run("id")` is `prepare()` followed by running `path` with `paths` on `sys.path`.
 
@@ -292,6 +295,85 @@ Other folders live in memory only. See [Files & Upload](files-and-upload.md).
    ```
 
 3. Reload. The program appears in the toolbar menu, in Puter's **Programs** menu bar, and can be opened with `?program=notes`.
+
+## Loading the programs list from a URL
+
+By default the Programs menu shows `programs/index.json` from PyTerm's own site. Another `index.json` — on any web server, GitHub Pages, a CDN… — can be used instead. Its programs and libraries are read **next to that index.json** (same relative paths as in `programs/`), or from the folder given by an optional `"base"` field.
+
+```json
+{
+  "name": "Maths club",
+  "base": "https://cdn.example.org/maths/v2/",
+  "programs": [ { "id": "quiz", "file": "quiz.py", "title": "Quiz", "description": "…", "autoplay": true } ],
+  "libraries": [ { "name": "mathlib", "files": ["__init__.py"] } ]
+}
+```
+
+| Optional top-level field | Meaning |
+|---|---|
+| `name` | Shown in the Programs menu and in the banner (otherwise the host and path) |
+| `base` | Folder the `file` / `files` / `zip` paths are relative to (absolute or relative to the index.json) |
+
+An address ending with `/` gets `index.json` added, so `https://example.org/my-programs/` works.
+
+### Ways to choose the list
+
+| Where | How | Priority |
+|---|---|---|
+| Page address | `https://<pyterm>/?programs=https://example.org/my-programs/index.json` (combine with `&program=quiz` to start one) | 1 (highest) |
+| User interface | **Programs → Load programs from URL…** (also in Puter's **Programs** menu bar). The choice is kept for the browser tab; recent addresses are offered as chips; **Default list** goes back | 2 |
+| JavaScript (before PyTerm starts) | `<script>window.PYTERM_CONFIG = { programs: "https://example.org/my-programs/" };</script>` placed before `app.js` | 3 |
+| HTML | `<meta name="pyterm-programs" content="https://example.org/my-programs/index.json">` in `index.html` | 4 |
+| Default | `programs/index.json` next to PyTerm | 5 |
+
+If the chosen list can't be loaded, PyTerm prints why at start-up and falls back to the next one (the site default, then the built-in list).
+
+### At run time
+
+**JavaScript**, in PyTerm's page (e.g. a script you add to `index.html`, or the browser console):
+
+```js
+await PyTerm.ready;                                   // Python is up
+await PyTerm.loadPrograms('https://example.org/my-programs/');   // → {url, base, name, builtin, via, count}
+await PyTerm.listPrograms();                          // [{id, title, description, autoplay, onexit}]
+await PyTerm.launch('quiz');                          // like the Programs menu; false if it couldn't start
+await PyTerm.resetPrograms();                         // back to the site's default list
+PyTerm.programsUrl;                                   // the list in use
+window.addEventListener('pyterm:programs', (e) => console.log(e.detail));   // fired on every change
+```
+
+**A page that embeds PyTerm in an `<iframe>`**:
+
+```html
+<iframe id="pt" src="https://charming-camel-7180.puter.site/?programs=https://example.org/my-programs/"></iframe>
+<script>
+  const pt = document.getElementById('pt');
+  // later: switch list
+  pt.contentWindow.postMessage({ type: 'pyterm:load-programs', url: 'https://example.org/other/' }, '*');
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'pyterm:programs-loaded') console.log(e.data);  // {ok, url, name, count, error}
+  });
+</script>
+```
+
+Only the parent page can send `pyterm:load-programs`; `url: null` restores the default list.
+
+**Python**:
+
+```python
+>>> from pyterm import programs
+>>> programs.load("https://example.org/my-programs/")
+{'url': 'https://example.org/my-programs/index.json', 'name': 'Maths club', 'builtin': False, 'count': 1, ...}
+>>> run("quiz")
+```
+
+### Requirements and safety
+
+- The other site must allow cross-origin reads (**CORS**, `Access-Control-Allow-Origin: *` or PyTerm's address) for the index.json **and** the program files. GitHub Pages, jsDelivr and `raw.githubusercontent.com` do. Without it the error says *could not be reached … (CORS)*.
+- Only `http://` and `https://` addresses are accepted.
+- Programs run with access to everything in PyTerm (your files, `~/browser`, sign-in tokens they ask for). Load lists you trust.
+- A start-up program (`autoplay` or `&program=`) from a list on **another site given in the address** (`?programs=`) does not start by itself: PyTerm asks first, with an *Always trust this site* option. Lists chosen in the UI, set in HTML / `PYTERM_CONFIG` by the site owner, or on PyTerm's own site start without asking.
+- `~/programs` holds the files of one list at a time: when a program of a different list starts, the previous list's files are removed so modules with the same name can't mix.
 
 ## Shared libraries
 

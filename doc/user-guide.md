@@ -130,6 +130,10 @@ Age? 36
 
 The **Programs** menu has ready-made interactive programs (a to-do list, a calculator, a guessing game) and runs any `.py` file as a program. To write your own, see [Custom Programs](custom-programs.md).
 
+### Programs from another site
+
+**Programs → Load programs from URL…** opens a dialog: paste the address of an `index.json` (or of the folder that contains it) and press **Load**. The menu then lists those programs; the choice is kept for the browser tab, recent addresses appear as chips, and **Default list** goes back to the built-in programs. A link can do the same: `https://<pyterm>/?programs=https://example.org/my-programs/`. If such a link also wants to start a program from another site automatically, PyTerm asks first. Only load programs you trust.
+
 > `input()` needs a browser with WebAssembly stack switching (current Chrome, Edge, Firefox) or a cross-origin isolated page. Otherwise the banner shows a note and `await pyterm.ainput("prompt")` can be used instead.
 
 ## Stopping running code
@@ -179,7 +183,7 @@ The last 500 distinct commands are kept for the current browser tab (they surviv
 | **Open** | Pick a `.py` file and run it (Puter Drive inside Puter, the computer's file dialog otherwise). Its variables stay available at the prompt. You can also drag a file onto the window. |
 | **Upload** | Copy files, folders or archives into Python's file system. See [Files & Upload](files-and-upload.md). |
 | **Save** | Save the session transcript as `.txt` (to Puter Drive inside Puter, as a download otherwise) |
-| **Programs** | Start a bundled interactive program, or run a `.py` file as a program. See [Custom Programs](custom-programs.md). |
+| **Programs** | Start a bundled interactive program, run a `.py` file as a program, or **Load programs from URL…** to use the programs list (`index.json`) of another site. The top of the menu shows which list is in use. See [Custom Programs](custom-programs.md#loading-the-programs-list-from-a-url). |
 | **Stop** | Shown while code runs: interrupts it (see [Stopping running code](#stopping-running-code)) |
 | **A↓ / A↑** | Decrease / increase the terminal font size (10–24 px). The terminal is resized to fit. |
 | **Demo** | Runs `await demo()`: a tour of styles, colours, line drawing, links, `\r` progress bars and cursor movement |
