@@ -66,6 +66,11 @@
 - Use `end=""` so `print` doesn't add a newline: `print(f"\r{i}%", end="")`.
 - If the line is wider than the terminal it wraps, and `\r` only returns to the start of the last part. Keep it shorter than `shutil.get_terminal_size().columns`.
 
+### An animation runs slower than the delays in the code
+- `time.sleep()` and `asyncio.sleep()` wait for the page to draw the previous frame before they go on (at most 1 second). When the computer or the browser can't draw as fast as the program asks, the animation slows down to the speed the page can keep up with, instead of falling behind and queuing frames. Stop always works at once.
+- To make it faster: make the window (or the font) smaller so there are fewer cells, redraw only the cells that changed, and send each frame in one write. The more colours change from cell to cell, the more work each frame is.
+- In a background tab the brake is off, because hidden tabs are not drawn.
+
 ### Box-drawing or wide characters don't line up
 - Use the bundled monospace font (JetBrains Mono). Some emoji come from fallback fonts whose width may differ slightly.
 

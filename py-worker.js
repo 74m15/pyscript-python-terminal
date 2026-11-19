@@ -8,6 +8,9 @@
 // - Ctrl+C / Stop uses Pyodide's interrupt buffer when shared memory is available, and
 //   cancels pending awaits otherwise. The page can always terminate the worker (hard stop).
 // - /home/pyodide/browser is an IndexedDB-backed folder (Emscripten IDBFS) that survives reloads.
+// - Back-pressure: every output message has a sequence number and the page answers {type:'drawn'}
+//   once it has shown it. time.sleep() / asyncio.sleep() first wait (up to DRAIN_MAX ms) until the
+//   page has caught up, so a fast animation can never queue more frames than the page can draw.
 
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs';
 
@@ -26,6 +29,33 @@ let pendingInterrupt = false; // Stop arrived while nothing was waiting: deliver
 const rpcs = new Map();       // pending requests from Python to the page (pyterm._bridge)
 let rpcSeq = 0;
 const rpcError = (code, message) => new Error(JSON.stringify({ code, message }));
+
+/* ---------- back-pressure: wait until the page has drawn our output ---------- */
+const DRAIN_MAX = 1000;       // never wait longer than this for the page (ms)
+let outSeq = 0;               // last output message sent
+let drawnSeq = 0;             // last output message the page has drawn
+let drawnCell = null;         // Int32Array on shared memory (cross-origin isolated pages only)
+const drainWaiters = new Set();
+
+function drained() {
+  if (drawnCell) drawnSeq = Math.max(drawnSeq, Atomics.load(drawnCell, 0));
+  return drawnSeq >= outSeq;
+}
+function onDrawn(seq) {
+  if (seq > drawnSeq) drawnSeq = seq;
+  if (drawnSeq >= outSeq) for (const w of [...drainWaiters]) w();
+}
+// Promise resolved when the page has drawn everything sent so far (or after maxMs).
+function drain(maxMs = DRAIN_MAX) {
+  flushOut();
+  if (drained()) return Promise.resolve();
+  return new Promise((resolve) => {
+    let t = 0;
+    const done = () => { clearTimeout(t); drainWaiters.delete(done); resolve(); };
+    t = setTimeout(done, Math.max(0, maxMs));
+    drainWaiters.add(done);
+  });
+}
 
 // The pyterm package (pylib/pyterm/*.py) is installed in ~/.pyterm/pyterm
 const PYTERM_FILES = ['__init__.py', 'console.py', 'packages.py', 'programs.py', 'sso.py', '_bridge.py'];
@@ -46,7 +76,7 @@ let flushTimer = 0;
 function flushOut() {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
   if (outBuf) {
-    self.postMessage({ type: 'out', text: outBuf, kind: outKind });
+    self.postMessage({ type: 'out', text: outBuf, kind: outKind, seq: ++outSeq });
     outBuf = '';
   }
   lastPost = performance.now();
@@ -132,15 +162,43 @@ const host = {
       self.postMessage(inputRequest(password, completions, history, 'msg'));
     });
   },
-  // time.sleep() under JSPI: resolves 0 when done, 1 when interrupted.
+  // time.sleep() under JSPI: resolves 0 when done, 1 when interrupted. It first waits until the
+  // page has drawn the output (that time counts as part of the sleep), then sleeps the rest.
   sleep(ms) {
     flushOut();
     if (pendingInterrupt) { pendingInterrupt = false; return Promise.resolve(1); }
+    const total = Math.max(0, Number(ms) || 0);
     return new Promise((resolve) => {
-      const entry = { resolve, t: 0 };
-      entry.t = setTimeout(() => { sleepers.delete(entry); resolve(0); }, Math.max(0, Number(ms) || 0));
+      const start = performance.now();
+      const entry = { t: 0, done: false, resolve: null };
+      entry.resolve = (v) => {
+        if (entry.done) return;
+        entry.done = true;
+        clearTimeout(entry.t);
+        sleepers.delete(entry);
+        resolve(v);
+      };
       sleepers.add(entry);
+      drain().then(() => {
+        if (entry.done) return;
+        entry.t = setTimeout(() => entry.resolve(0), Math.max(0, total - (performance.now() - start)));
+      });
     });
+  },
+  // asyncio.sleep(): promise resolved when the page has drawn the output (at most maxMs)
+  drain: (maxMs) => drain(maxMs == null ? DRAIN_MAX : Number(maxMs)),
+  // Shared-memory variant for the blocking time.sleep() fallback: waits at most maxMs.
+  wait_drawn(maxMs) {
+    flushOut();
+    if (!drawnCell) return;
+    const end = performance.now() + Math.max(0, Number(maxMs) || 0);
+    for (;;) {
+      const d = Atomics.load(drawnCell, 0);
+      if (d >= outSeq) return;
+      const left = end - performance.now();
+      if (left <= 0) return;
+      Atomics.wait(drawnCell, 0, d, Math.min(left, 50));
+    }
   },
   progress: (done, total, label) => {
     self.postMessage({ type: 'progress', done: Number(done), total: Number(total), label: label ? String(label) : '' });
@@ -172,6 +230,7 @@ const host = {
 async function init(m) {
   try {
     if (m.interrupt) interruptBuf = m.interrupt;
+    if (m.drawn) drawnCell = new Int32Array(m.drawn);
     if (m.stdin) {
       stdinCtl = new Int32Array(m.stdin, 0, 2);
       stdinData = new Uint8Array(m.stdin, 8);
@@ -342,6 +401,9 @@ self.onmessage = (e) => {
     case 'init':
       init(m);
       return;
+    case 'drawn':
+      onDrawn(Number(m.seq) || 0);
+      return;
     case 'input_reply':
       if (inputWaiter) { const w = inputWaiter; inputWaiter = null; w([m.status, m.text || '']); }
       return;
@@ -354,6 +416,7 @@ self.onmessage = (e) => {
       return;
     }
     case 'interrupt':
+      for (const w of [...drainWaiters]) w(); // never make Stop wait for the page
       if (inputWaiter) { const w = inputWaiter; inputWaiter = null; w([3, '']); return; }
       if (rpcs.size) {
         // Python is waiting for the page (e.g. a sign-in dialog): cancel it → KeyboardInterrupt

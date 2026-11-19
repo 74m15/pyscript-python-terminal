@@ -3,6 +3,13 @@
 // (DECSC/DECRC, IND, NEL, RI, HTS, RIS, SS2/SS3, charset designation, DECALN, DECDHL/DECDWL),
 // CSI sequences (cursor movement, erase, insert/delete, scroll, tabs, SGR incl. 256/truecolor,
 // scroll regions, ANSI & DEC private modes, alternate screen), OSC titles and OSC 8 hyperlinks.
+//
+// Speed (heavy full-screen animations):
+// - write() parses runs of printable text and CSI parameters in tight loops instead of one
+//   call per character; SGR results are cached per (state, sequence).
+// - Drawing happens at most once per animation frame, only for lines that changed. Cells that
+//   look the same are merged into one <span>; a line whose markup did not change is not touched;
+//   plain lines use textContent instead of innerHTML.
 
 const DEFAULT_FG = '#d6dde6';
 const DEFAULT_BG = '#0b0f14';
@@ -38,10 +45,11 @@ function makeAttr(o) {
     const val = o[k];
     v[k] = val === undefined ? (NULLABLE.has(k) ? null : k === 'ul' ? 0 : false) : val;
   }
-  const key = ATTR_KEYS.map((k) => (v[k] === null || v[k] === false || v[k] === 0 ? '' : v[k] === true ? '1' : v[k])).join('|');
+  // colour 0 (black) is a real colour, so only null / false count as "not set"
+  const key = ATTR_KEYS.map((k) => { const x = v[k]; return x === null || x === false ? '' : x === true ? '1' : String(x); }).join('|');
   let a = attrCache.get(key);
   if (a) return a;
-  if (attrCache.size > 20000) attrCache.clear();
+  if (attrCache.size > 20000) { attrCache.clear(); attrCache.set(DEFAULT.key, DEFAULT); }
   a = Object.freeze({ ...v, key });
   attrCache.set(key, a);
   return a;
@@ -73,10 +81,14 @@ function attrStyle(a) {
     if (st) css += `text-decoration-style:${st};text-underline-offset:3px;`;
     if (a.ulc != null) css += `text-decoration-color:${colorCss(a.ulc)};`;
   }
-  s = { css, cls: a.blink ? 'blink' : '' };
+  const cls = a.blink ? 'blink' : '';
+  const url = a.link ? safeUrl(a.link) : null;
+  // cells whose attributes look the same share a signature and are drawn as one run
+  s = { css, cls, url, sig: css || cls || url ? `${css}|${cls}|${url || ''}` : '' };
   styleCache.set(a.key, s);
   return s;
 }
+const sgrCache = new Map(); // "attr key, default key, SGR parameters" -> resulting attr
 
 /* ---------------- unicode width ---------------- */
 function wcwidth(cp) {
@@ -103,41 +115,62 @@ function wcwidth(cp) {
 
 /* ---------------- rendering helpers ---------------- */
 const ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+const NEEDS_ESC = /[&<>"]/;
 const escHtml = (s) => s.replace(/[&<>"]/g, (c) => ESC_MAP[c]);
 const safeUrl = (u) => (/^(https?:|mailto:|ftp:)/i.test(u) ? u : null);
 
 function wrapRun(html, at) {
-  if (at.key === DEFAULT.key) return html;
   const st = attrStyle(at);
   let s = st.css || st.cls
     ? `<span${st.cls ? ` class="${st.cls}"` : ''}${st.css ? ` style="${st.css}"` : ''}>${html}</span>`
     : html;
-  if (at.link) {
-    const u = safeUrl(at.link);
-    if (u) s = `<a href="${escHtml(u)}" target="_blank" rel="noopener noreferrer">${s}</a>`;
-  }
+  if (st.url) s = `<a href="${escHtml(st.url)}" target="_blank" rel="noopener noreferrer">${s}</a>`;
   return s;
 }
 
+// renderLine() sets this to true when the line it returned is plain text (no markup and nothing
+// escaped), so it can be put on the page with textContent, which is faster than innerHTML.
+let renderedPlain = false;
+
 function renderLine(ln, curX) {
-  const c = ln.c, a = ln.a;
-  const n = Math.max(c.length, curX + 1);
-  let out = '', run = '', runKey = null, runAttr = DEFAULT;
-  const flush = () => { if (run) { out += wrapRun(run, runAttr); run = ''; } };
+  const c = ln.c, a = ln.a, len = c.length;
+  const n = Math.max(len, curX + 1);
+  let out = '', run = '', runSig = '', runAttr = DEFAULT, plain = true;
   for (let i = 0; i < n; i++) {
-    const ch = i < c.length ? c[i] : ' ';
+    const ch = i < len ? c[i] : ' ';
     if (ch === '') continue;
-    const at = (i < c.length && a[i]) || DEFAULT;
-    let html = escHtml(ch);
-    if (c[i + 1] === '') html = `<span class="w2">${html}</span>`;
-    if (i === curX) { flush(); runKey = null; out += `<span class="cur">${html}</span>`; continue; }
-    if (at.key !== runKey) { flush(); runKey = at.key; runAttr = at; }
+    let html = ch;
+    if (ch.length === 1) { const e = ESC_MAP[ch]; if (e) { html = e; plain = false; } }
+    else if (NEEDS_ESC.test(ch)) { html = escHtml(ch); plain = false; }
+    if (i + 1 < len && c[i + 1] === '') { html = `<span class="w2">${html}</span>`; plain = false; }
+    if (i === curX) {
+      if (run) { out += runSig ? wrapRun(run, runAttr) : run; run = ''; }
+      runSig = null;
+      out += `<span class="cur">${html}</span>`;
+      plain = false;
+      continue;
+    }
+    const at = (i < len && a[i]) || DEFAULT;
+    if (at !== runAttr || runSig === null) {
+      const sg = at === DEFAULT ? '' : attrStyle(at).sig;
+      if (sg !== runSig) {
+        if (run) { out += runSig ? wrapRun(run, runAttr) : run; run = ''; }
+        runSig = sg;
+        if (sg) plain = false;
+      }
+      runAttr = at;
+    }
     run += html;
   }
-  flush();
-  if (ln.size) out = `<span class="ln">${out}</span>`;
+  if (run) out += runSig ? wrapRun(run, runAttr) : run;
+  if (ln.size) { out = `<span class="ln">${out}</span>`; plain = false; }
+  renderedPlain = plain;
   return out;
 }
+
+// A cell that can be printed by the fast path of write(): one UTF-16 unit, width 1, no control.
+const fastCell = (c) => (c >= 0x20 && c < 0x7f) || (c >= 0xa0 && c < 0xd800 && (c < 0x300 || wcwidth(c) === 1));
+const isParam = (c) => (c >= 0x30 && c <= 0x39) || c === 0x3b || c === 0x3a;
 
 const SIZE_CLASS = ['tl', 'tl dw', 'tl dht', 'tl dhb'];
 const blankLine = () => ({ c: [], a: [], wrapped: false, size: 0, dirty: true });
@@ -161,12 +194,44 @@ export class Terminal {
     this._hiddenEl = null;
     this.showCursor = false;
     this._raf = 0;
+    this._late = 0;
     this._fullReset();
   }
 
   /* ---------- public API ---------- */
   write(s) {
-    for (const ch of s) this._feed(ch);
+    const n = s.length;
+    let i = 0;
+    while (i < n) {
+      const c = s.charCodeAt(i);
+      // fast path: a run of ordinary printable characters
+      if (this.state === GROUND && fastCell(c) && this.ss < 0 && !this.insertMode && this._plainCharset()) {
+        let j = i + 1;
+        while (j < n && fastCell(s.charCodeAt(j))) j++;
+        this._printRun(s, i, j);
+        i = j;
+        continue;
+      }
+      // fast path: the parameters of a CSI sequence ("38;2;0;255;70")
+      if (this.state === CSI && isParam(c)) {
+        let j = i + 1;
+        while (j < n && isParam(s.charCodeAt(j))) j++;
+        const room = 256 - this.params.length;
+        if (room > 0) this.params += j - i <= room ? s.slice(i, j) : s.slice(i, i + room);
+        i = j;
+        continue;
+      }
+      if (c >= 0xd800 && c <= 0xdbff && i + 1 < n) {
+        const d = s.charCodeAt(i + 1);
+        if (d >= 0xdc00 && d <= 0xdfff) {
+          this._feed(s.slice(i, i + 2), (c - 0xd800) * 0x400 + (d - 0xdc00) + 0x10000);
+          i += 2;
+          continue;
+        }
+      }
+      this._feed(s[i], c);
+      i++;
+    }
     this._schedule();
   }
 
@@ -206,6 +271,7 @@ export class Terminal {
     b.lineEls = [];
     b.lines = [];
     b.pendingTrim = 0;
+    b.cacheFrom = 0;
     b.x = 0; b.y = 0; b.wrapPending = false; b.saved = null;
     this._hiddenEl = null;
     this.renderNow();
@@ -265,14 +331,20 @@ export class Terminal {
 
   renderNow() {
     if (this._raf) cancelAnimationFrame(this._raf);
+    if (this._late) clearTimeout(this._late);
     this._raf = 0;
+    this._late = 0;
     this._renderBuf(this.buf);
     this.opts.onRender && this.opts.onRender();
   }
 
   /* ---------- rendering ---------- */
   _schedule() {
-    if (!this._raf) this._raf = requestAnimationFrame(() => this.renderNow());
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => this.renderNow());
+    // Animation frames don't come while a visible page isn't painted (e.g. an off-screen frame):
+    // draw a little later anyway, so a program waiting for the screen is not held back.
+    this._late = setTimeout(() => { this._late = 0; if (!document.hidden) this.renderNow(); }, 150);
   }
 
   _renderBuf(b) {
@@ -282,6 +354,7 @@ export class Terminal {
       for (let i = 0; i < k; i++) b.lineEls[i].remove();
       b.lineEls.splice(0, k);
       b.pendingTrim = 0;
+      b.cacheFrom = Math.max(0, b.cacheFrom - k);
     }
     const lines = b.lines;
     while (b.lineEls.length > lines.length) b.lineEls.pop().remove();
@@ -298,12 +371,25 @@ export class Terminal {
       const ln = lines[i];
       const curX = i === cy ? Math.min(b.x, this.cols - 1) : -1;
       if (el._line !== ln || ln.dirty || el._cur !== curX) {
-        el.className = SIZE_CLASS[ln.size] || 'tl';
-        el.innerHTML = renderLine(ln, curX);
+        const cls = SIZE_CLASS[ln.size] || 'tl';
+        if (el.className !== cls) el.className = cls;
+        const html = renderLine(ln, curX);
+        // a line drawn again with the same content (programs that repaint the whole screen) is left alone
+        if (el._html !== html) {
+          if (renderedPlain) el.textContent = html;
+          else el.innerHTML = html;
+          el._html = html;
+        }
         el._line = ln;
         el._cur = curX;
         ln.dirty = false;
       }
+    }
+    if (!b.alt) {
+      // only on-screen lines keep their markup for the comparison above: scrollback stays light
+      const vis = Math.max(0, lines.length - this.rows);
+      for (let i = Math.min(b.cacheFrom, vis); i < vis; i++) b.lineEls[i]._html = undefined;
+      b.cacheFrom = vis;
     }
     if (this.input) {
       const target = b.lineEls[b.y];
@@ -322,7 +408,7 @@ export class Terminal {
   _mkBuf(alt) {
     const el = document.createElement('div');
     el.className = 'tbuf';
-    return { alt, lines: [], x: 0, y: 0, wrapPending: false, saved: null, el, lineEls: [], pendingTrim: 0 };
+    return { alt, lines: [], x: 0, y: 0, wrapPending: false, saved: null, el, lineEls: [], pendingTrim: 0, cacheFrom: 0 };
   }
 
   _fullReset() {
@@ -391,8 +477,7 @@ export class Terminal {
   }
 
   /* ---------- parser ---------- */
-  _feed(ch) {
-    const cp = ch.codePointAt(0);
+  _feed(ch, cp = ch.codePointAt(0)) {
     if (cp === 0x1b) {
       if (this.state === OSC) this._oscDispatch();
       this.state = ESC;
@@ -509,6 +594,29 @@ export class Terminal {
   }
 
   /* ---------- printing ---------- */
+  // G0..G3 maps printable ASCII to itself (not DEC line drawing '0' or UK 'A')
+  _plainCharset() {
+    const cs = this.charsets[this.gl];
+    return cs !== '0' && cs !== 'A';
+  }
+
+  // Same as _print() for s[from..to) when every character is a width-1 cell (see fastCell)
+  // and there is no single shift or insert mode.
+  _printRun(s, from, to) {
+    const b = this.buf, cols = this.cols, at = this.attr, wrap = this.autowrap;
+    let ln = this._line(b.y);
+    for (let k = from; k < to; k++) {
+      if (b.wrapPending) {
+        if (wrap) { ln.wrapped = true; this._index(); b.x = 0; ln = this._line(b.y); }
+        b.wrapPending = false;
+      }
+      this._setCell(ln, b.x, s[k], at);
+      ln.dirty = true;
+      if (++b.x >= cols) { b.x = cols - 1; b.wrapPending = wrap; }
+    }
+    this.lastChar = s[to - 1];
+  }
+
   _print(ch, cp) {
     const b = this.buf;
     const cs = this.ss >= 0 ? this.charsets[this.ss] : this.charsets[this.gl];
@@ -868,6 +976,10 @@ export class Terminal {
   }
 
   _sgr(raw) {
+    // the same sequence applied to the same state always gives the same result
+    const ck = this.attr.key + '\n' + this.defaultAttr.key + '\n' + this.params;
+    const hit = sgrCache.get(ck);
+    if (hit) { this.attr = hit; return; }
     if (raw.length === 0) raw = ['0'];
     const a = { ...this.attr };
     const toColor = (n) => (Number.isFinite(n) ? clamp(n, 0, 255) : null);
@@ -925,5 +1037,7 @@ export class Terminal {
       }
     }
     this.attr = makeAttr(a);
+    if (sgrCache.size > 4096) sgrCache.clear();
+    sgrCache.set(ck, this.attr);
   }
 }

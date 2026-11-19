@@ -41,7 +41,7 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
   #screen { font-size: var(--term-size); line-height: 1.55; }
   #output { color: #d6dde6; position: relative; }
   #output.reverse-video { background: #0b0f14; filter: invert(1) hue-rotate(180deg); }
-  .tl { white-space: pre; min-height: 1.55em; overflow: hidden; }
+  .tl { white-space: pre; min-height: 1.55em; overflow: hidden; contain: content; }
   .tl a { color: inherit; text-decoration: none; }
   .tl a:hover > span, .tl a:hover { text-decoration: underline; }
   .tl.dw .ln, .tl.dht .ln, .tl.dhb .ln { display: inline-block; transform-origin: left top; }

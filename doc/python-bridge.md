@@ -20,10 +20,12 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
 ```
  Page (engine.js)                                   Worker (py-worker.js → repl.py)
  ─────────────────                                  ───────────────────────────────
- init {interrupt?, stdin?, cols, rows}  ──────────►  loadPyodide, mount ~/browser, run repl.py
+ init {interrupt?, stdin?, drawn?,      ──────────►  loadPyodide, mount ~/browser, run repl.py
+       cols, rows}
                                         ◄──────────  status {text} … ready {version, persist, shared, interrupt, jspi}
  push {id, line}                        ──────────►  push(line)
-                                        ◄──────────  out {text, kind} …  input {…} …
+                                        ◄──────────  out {text, kind, seq} …  input {…} …
+ drawn {seq}                            ──────────►  output up to seq is on screen (sleeps may go on)
                                         ◄──────────  result {id, value: "complete" | "incomplete" | "exit"}
  input_reply {text, status}             ──────────►  (or written to the shared stdin buffer)
  interrupt                              ──────────►  cancel tasks (+ SIGINT through the shared buffer)
@@ -32,13 +34,13 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
                                         ◄──────────  event {name, data}         (one-way notifications)
 ```
 
-Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `rpc_result`, `interrupt`, `size` and `flush_fs` bypass the queue. The file requests `save`, `extract`, `read` and `sync` bypass it too, so uploads are written while user code runs (they are handled whenever Python yields: `input()`, `time.sleep()`, `await`).
+Requests carrying an `id` are answered with exactly one `{type:'result', id, value, error}` and are executed **one at a time** in the order received. `input_reply`, `rpc_result`, `interrupt`, `size`, `flush_fs` and `drawn` bypass the queue. The file requests `save`, `extract`, `read` and `sync` bypass it too, so uploads are written while user code runs (they are handled whenever Python yields: `input()`, `time.sleep()`, `await`).
 
 ## Messages from the page
 
 | type | Payload | Answer `value` | Notes |
 |---|---|---|---|
-| `init` | `interrupt` (Uint8Array on a SharedArrayBuffer or null), `stdin` (SharedArrayBuffer or null), `cols`, `rows` | — | Sent once by `start()` |
+| `init` | `interrupt` (Uint8Array on a SharedArrayBuffer or null), `stdin` (SharedArrayBuffer or null), `drawn` (SharedArrayBuffer(4) or null), `cols`, `rows` | — | Sent once by `start()` |
 | `push` | `line` | `"complete"`, `"incomplete"`, `"exit"` or `"stopped"` | Loads Pyodide packages the line imports first. `"stopped"`: a program with `"onexit": "stop"` ended, the page stops Python |
 | `complete` | `source` | `[options[], start]` | `rlcompleter` candidates; `start` is where the completed word begins |
 | `reset_buffer` | — | — | Drops a half-typed block |
@@ -55,6 +57,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `interrupt` | — | — | Ctrl+C / Stop |
 | `size` | `cols`, `rows` | — | Applied before the next request |
 | `flush_fs` | — | — | Save `~/browser` (page hidden or closing) |
+| `drawn` | `seq` | — | The page has drawn every `out` message up to `seq`. Sent by `engine.drawn()` after each terminal render, and right away while the tab is hidden. Releases sleeps waiting for the screen ([back-pressure](architecture.md#back-pressure-python-waits-for-the-screen)) |
 
 `status` for input replies: `1` = a line, `2` = EOF (Ctrl+D → `EOFError`), `3` = interrupt (Ctrl+C → `KeyboardInterrupt`), `4` = Stop button (→ `pyterm.StopProgram`, ends the program).
 
@@ -65,7 +68,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `status` | `text` | Loader message during boot |
 | `ready` | `version`, `persist`, `shared`, `interrupt`, `jspi` | Remove loader, banner, prompt, badges |
 | `fatal` | `message` | Status **Failed** |
-| `out` | `text`, `kind` (`out`, `err`, `info`, `result`) | Written to the terminal |
+| `out` | `text`, `kind` (`out`, `err`, `info`, `result`), `seq` (1, 2, 3… per worker) | Written to the terminal; acknowledged with `drawn` once painted |
 | `clear` | — | Clear the screen |
 | `title` | `text` | Header / window title |
 | `input` | `via` (`msg` or `sab`), `password`, `completions`, `history` | Show the input line for `input()` |
@@ -80,6 +83,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 
 - **Interrupt buffer**: `Uint8Array(1)` passed to `pyodide.setInterruptBuffer()`. Writing `2` raises `KeyboardInterrupt` at the next bytecode check.
 - **Stdin buffer**: `SharedArrayBuffer(8 + 1 MiB)`. `Int32Array[0]` is the status (0 = waiting), `Int32Array[1]` the byte length, then UTF-8 data. The worker waits with `Atomics.wait`; the page writes the data, stores the status and calls `Atomics.notify`.
+- **Drawn cell**: `SharedArrayBuffer(4)`. `Int32Array[0]` is the last `out` sequence number the page has drawn. `engine.drawn()` stores it and calls `Atomics.notify`; the blocking `time.sleep()` fallback waits on it with `Atomics.wait` (`host.wait_drawn`), because a blocked worker can't receive the `drawn` message.
 
 ## The pyterm_host module
 
@@ -94,7 +98,9 @@ Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.p
 | `can_block()` | True if shared-memory stdin is available |
 | `read_input(password, completions, history)` | Blocking read via `Atomics.wait` → `[status, text]` |
 | `input_async(password, completions, history)` | Promise of `[status, text]` (JSPI / `ainput`) |
-| `sleep(ms)` | Promise used by `time.sleep()` under JSPI; resolves `0`, or `1` when Stop wakes it early (→ `KeyboardInterrupt`) |
+| `sleep(ms)` | Promise used by `time.sleep()` under JSPI. First waits until the page has drawn the output (at most 1 s, counted in `ms`), then sleeps the rest; resolves `0`, or `1` when Stop wakes it early (→ `KeyboardInterrupt`) |
+| `drain(maxMs)` | Promise resolved when the page has drawn all output sent so far, or after `maxMs` (default 1000). Used by `asyncio.sleep()`. Stop resolves it at once |
+| `wait_drawn(maxMs)` | Blocking variant for shared-memory pages (`Atomics.wait` on the drawn cell) |
 | `progress(done, total, label)` | Progress message |
 | `download(name, data, mime)` | Send bytes to the page |
 | `load_imports(source)` | `pyodide.loadPackagesFromImports(source)` |
@@ -161,7 +167,8 @@ asyncio re-raises `SystemExit` and `KeyboardInterrupt` out of the event loop, wh
 | `builtins.input` | `pyterm.input(prompt)` → `read_line()` |
 | `sys.stdin` | `_Stdin` (`readline()`, `read()`, `isatty() == True`); used by `cmd.Cmd`, `sys.stdin.readline()`, `for line in sys.stdin` |
 | `getpass.getpass` | Password-mode `pyterm.input` |
-| `time.sleep` | `run_sync(host.sleep(ms))` when possible (Stop wakes it, the worker stays responsive), otherwise `Atomics.wait` in 100 ms slices on isolated pages |
+| `time.sleep` | `run_sync(host.sleep(ms))` when possible (Stop wakes it, the worker stays responsive), otherwise `host.wait_drawn(1000)` then `Atomics.wait` in 100 ms slices on isolated pages. Either way it first waits for the page to draw pending output; that wait is part of the requested time |
+| `asyncio.sleep` | `await host.drain(1000)` then the original `asyncio.sleep` for the time that is left. A delay of `0` (yield to the loop) never waits for the page |
 
 `read_line()` prefers **JSPI** (`pyodide.ffi.run_sync`), which suspends Python while the worker's event loop keeps running (so `~/browser` can still be saved). It falls back to **shared-memory blocking**, and otherwise raises a `RuntimeError` that suggests `await pyterm.ainput()`.
 

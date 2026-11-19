@@ -106,10 +106,12 @@ Edit `banner()` in `app.js`. Each `write(text, kind)` call adds one coloured seg
 | Completion candidates listed | `app.js` → `doComplete` (`slice(0, 300)`) | 300 |
 | stdin buffer for one `input()` line | `engine.js` → `STDIN_BYTES` | 1 MiB |
 | Output batch size / interval | `py-worker.js` → `out()` (`65536`, `12` ms) | 64 KB / 12 ms |
+| Longest wait of a sleep for the screen (back-pressure) | `py-worker.js` → `DRAIN_MAX`, and `1000` in `_sleep` / `_asleep` in `repl.py` | 1000 ms |
 | Upload size warning | `upload.js` → `BIG` | 200 MB |
 | Tree lines after an upload | `upload.js` → `engine.call('tree', { limit: 40 })` | 40 |
 | OSC payload length | `terminal.js` → `_feed` (`4096`) | 4096 |
-| CSI parameter length | `terminal.js` → `_feed` (`256`) | 256 |
+| CSI parameter length | `terminal.js` → `_feed` and `write()` (`256`) | 256 |
+| Cached SGR results | `terminal.js` → `_sgr` (`sgrCache`, `4096`) | 4096 |
 
 ## Cursor appearance
 

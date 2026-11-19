@@ -2,7 +2,7 @@
 //
 // Messages page → worker: init, push, complete, reset_buffer, restart, run_file, save, extract,
 //   tree, read, sync (all answered with {type:'result', id}), plus input_reply, interrupt, size,
-//   flush_fs and rpc_result.
+//   flush_fs, rpc_result and drawn (output up to `seq` is on screen: see drawn()).
 // Messages worker → page: status, ready, fatal, out, clear, title, input, progress, download, result,
 //   rpc (Python asks the page for something: answer with rpcReply), rpc_cancel (Stop pressed while
 //   a request was pending) and event (one-way notifications from Python).
@@ -27,6 +27,11 @@ export class PythonEngine {
     this.stop();
     this.info = null;
     this.gen = (this.gen || 0) + 1; // answers to requests of an older worker are dropped
+    this.outSeq = 0;   // last output message received
+    this.ackSeq = 0;   // last one reported as drawn
+    this.drawnCell = null;
+    let drawnBuf = null;
+    if (this.shared) { drawnBuf = new SharedArrayBuffer(4); this.drawnCell = new Int32Array(drawnBuf); }
     const w = new Worker(new URL('./py-worker.js', import.meta.url), { type: 'module', name: 'pyterm-python' });
     this.worker = w;
     this.interrupt = null;
@@ -42,7 +47,7 @@ export class PythonEngine {
       e.preventDefault && e.preventDefault();
       if (!this.info) this.h.onFatal && this.h.onFatal(e.message || 'The Python worker failed to start');
     };
-    w.postMessage({ type: 'init', interrupt: this.interrupt, stdin: this.stdin, cols: this.size[0], rows: this.size[1] });
+    w.postMessage({ type: 'init', interrupt: this.interrupt, stdin: this.stdin, drawn: drawnBuf, cols: this.size[0], rows: this.size[1] });
   }
 
   stop() {
@@ -55,7 +60,12 @@ export class PythonEngine {
 
   _onMessage(m) {
     switch (m.type) {
-      case 'out': this.h.onOutput && this.h.onOutput(m.text, m.kind); break;
+      case 'out':
+        if (m.seq) this.outSeq = m.seq;
+        this.h.onOutput && this.h.onOutput(m.text, m.kind);
+        // a hidden tab doesn't paint: don't hold Python back
+        if (typeof document !== 'undefined' && document.hidden) this.drawn();
+        break;
       case 'clear': this.h.onClear && this.h.onClear(); break;
       case 'title': this.h.onTitle && this.h.onTitle(m.text); break;
       case 'status': this.h.onStatus && this.h.onStatus(m.text); break;
@@ -142,4 +152,13 @@ export class PythonEngine {
   }
 
   flushFs() { if (this.worker) this.worker.postMessage({ type: 'flush_fs' }); }
+
+  /** Call after the terminal has painted: tells Python the output it sent is on screen, so a
+   *  time.sleep() waiting for the page can go on (back-pressure, see py-worker.js). */
+  drawn() {
+    if (!this.worker || this.outSeq <= this.ackSeq) return;
+    this.ackSeq = this.outSeq;
+    if (this.drawnCell) { Atomics.store(this.drawnCell, 0, this.ackSeq); Atomics.notify(this.drawnCell, 0); }
+    this.worker.postMessage({ type: 'drawn', seq: this.ackSeq });
+  }
 }

@@ -8,6 +8,7 @@ PyTerm is a static, client-side application. There is no build step, no server-s
 - [Input → execution → output](#input--execution--output)
 - [input() and other reads from stdin](#input-and-other-reads-from-stdin)
 - [Stopping code](#stopping-code)
+- [Back-pressure: Python waits for the screen](#back-pressure-python-waits-for-the-screen)
 - [The input line inside the terminal](#the-input-line-inside-the-terminal)
 - [Rendering strategy](#rendering-strategy)
 - [Terminal sizing](#terminal-sizing)
@@ -68,10 +69,12 @@ The page the Microsoft sign-in pop-up returns to; MSAL reads the result from it 
 - Starts (and restarts) the worker; creates the shared interrupt and stdin buffers when `crossOriginIsolated` is true.
 - `call(type, payload)` → Promise, matched by request id.
 - `reply(text, status)` answers an `input()` request, `rpcReply(req, value, blobs, error)` answers a request from Python, `sendInterrupt()`, `resize()`, `flushFs()`.
+- `drawn()` tells the worker that the output received so far is on screen (called by `app.js` after every terminal render; see [Back-pressure](#back-pressure-python-waits-for-the-screen)).
 
 ### `py-worker.js`: the worker
 - Loads Pyodide 314.0.7 with `HOME=/home/pyodide`, `TERM`, `COLORTERM`.
-- Batches stdout/stderr into `out` messages (at most one every ~12 ms, or 64 KB).
+- Batches stdout/stderr into `out` messages (at most one every ~12 ms, or 64 KB), each with a sequence number `seq`.
+- Keeps track of the last `seq` the page has drawn; `time.sleep()` and `asyncio.sleep()` wait for it (back-pressure, at most `DRAIN_MAX` = 1000 ms).
 - Mounts `/home/pyodide/browser` on IDBFS and syncs it.
 - Registers the `pyterm_host` module, installs the `pyterm` package (`pylib/pyterm/*.py` → `~/.pyterm/pyterm/`), runs `repl.py` and keeps references to its functions.
 - Forwards `rpc` requests from Python to the page and resolves them with `rpc_result`; Stop cancels pending ones.
@@ -79,7 +82,7 @@ The page the Microsoft sign-in pop-up returns to; MSAL reads the result from it 
 
 ### `repl.py`: Python side
 - `SafeConsole` (a `pyodide.console.PyodideConsole`) runs REPL lines with top-level await.
-- Replaces `input`, `sys.stdin`, `getpass.getpass` and `time.sleep` with worker-aware versions.
+- Replaces `input`, `sys.stdin`, `getpass.getpass`, `time.sleep` and `asyncio.sleep` with worker-aware versions.
 - Runs staged scripts and programs, implements `run()`, uploads, archive extraction, `tree()` and downloads.
 
 ### `pylib/pyterm/`: the `pyterm` package
@@ -170,6 +173,28 @@ If neither mechanism is available (old browsers on a non-isolated page), `input(
    - always posts `{type:'interrupt'}`, which cancels every pending asyncio task (stops `await asyncio.sleep()`, `time.sleep()`, network waits).
 4. If Python is still busy 2.5 s later (a CPU loop without shared memory), `hardRestart()` terminates the worker and starts a fresh one. Variables are lost; `~/browser` is kept (it is synced after every request and while waiting for input).
 
+## Back-pressure: Python waits for the screen
+
+A program that prints a full screen and then sleeps a little (an animation) can produce frames faster than a slow page can draw them. Without a brake the frames pile up in the page's message queue, the animation lags further and further behind, and Stop seems slow because the old frames are still being drawn.
+
+```
+worker                                        page
+──────                                        ────
+out {text, kind, seq: 41}   ───────────────►  term.write()  → render on the next animation frame
+out {text, kind, seq: 42}   ───────────────►  term.write()
+time.sleep(0.05)                               …
+  └─ waits until drawnSeq ≥ 42 (max 1000 ms)  onRender → engine.drawn()
+                            ◄───────────────  drawn {seq: 42}   (+ Atomics.store/notify on isolated pages)
+  └─ then sleeps what is left of the 50 ms
+```
+
+- The time spent waiting for the page **counts as part of the sleep**: a program that sleeps 50 ms between frames still runs at the same speed when the page keeps up, and simply slows down to the page's speed when it can't.
+- `time.sleep()` under JSPI (`host.sleep`) and `asyncio.sleep()` (`host.drain`) wait through messages; the shared-memory fallback of `time.sleep()` waits with `Atomics.wait` on a 4-byte shared cell (`host.wait_drawn`).
+- The wait never exceeds `DRAIN_MAX` (1000 ms, in `py-worker.js`).
+- **Stop** releases every wait at once, so it is never delayed.
+- A **hidden tab** does not paint: `engine.js` reports output as drawn as soon as it arrives while `document.hidden` is true, and `app.js` reports everything when the tab is hidden, so programs in background tabs are not slowed down by the brake.
+- Code that never sleeps (a plain `for` loop with `print`) is not slowed down; its output is batched as before.
+
 ## The input line inside the terminal
 
 The input line is a real `<textarea>` (native editing, selection, IME, mobile keyboards):
@@ -181,10 +206,13 @@ The input line is a real `<textarea>` (native editing, selection, IME, mobile ke
 ## Rendering strategy
 
 - **Model.** Each buffer holds line objects `{ c: string[], a: Attr[], wrapped, size, dirty }`.
-- **Batching.** The worker batches output; the terminal parses each chunk and schedules one `requestAnimationFrame` render.
-- **Incremental DOM.** One `<div class="tl">` per line; only dirty lines are rebuilt; runs of equal attributes become one `<span>`.
+- **Batching.** The worker batches output; the terminal parses each chunk and schedules one `requestAnimationFrame` render. However many chunks arrive between two frames, only the final state is drawn.
+- **Fast parser paths.** `write()` scans the text by index: runs of ordinary printable characters (width 1, no control codes, normal character set) are stored in one tight loop (`_printRun`), and the digits of a CSI sequence (`38;2;0;255;70`) are copied in one slice. Everything else goes through the full state machine (`_feed`). SGR results are cached per *(current attributes, parameters)*, so the repeated colour codes of an animation cost one lookup.
+- **Incremental DOM.** One `<div class="tl">` per line; only dirty lines are rebuilt. Neighbouring cells whose attributes *look* the same (same CSS, class and link) become one `<span>`, even when the attributes differ in ways that are not visible.
+- **Skipping unchanged lines.** The markup of each on-screen line is remembered; when a program repaints the whole screen, lines whose markup is identical to what is shown are not touched. Lines without any markup are set with `textContent` instead of `innerHTML`. Scrolled-off lines forget their markup, so long sessions stay light.
+- **Containment.** `.tl { contain: content }` lets the browser lay out a changed line without re-checking the others.
 - **Cursor.** While a program runs, the cell under the cursor is wrapped in `<span class="cur">`.
-- **Auto-scroll.** `onRender` keeps `#screen` scrolled to the bottom.
+- **Auto-scroll and acknowledgement.** `onRender` keeps `#screen` scrolled to the bottom and calls `engine.drawn()` ([back-pressure](#back-pressure-python-waits-for-the-screen)).
 
 ## Terminal sizing
 

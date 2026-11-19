@@ -59,8 +59,12 @@ function activeHistory() {
 }
 
 /* ---------- terminal ---------- */
+let engineReady = false; // the engine is created below; renders before that need no acknowledgement
 const term = new Terminal(output, {
-  onRender: () => { screen.scrollTop = screen.scrollHeight; },
+  onRender: () => {
+    screen.scrollTop = screen.scrollHeight;
+    if (engineReady) engine.drawn(); // Python may continue (back-pressure)
+  },
   onBell: () => {
     screen.classList.remove('bell');
     void screen.offsetWidth;
@@ -111,6 +115,9 @@ const engine = new PythonEngine({
     else write(`Python could not start: ${msg}\n`, 'err');
   },
 });
+
+engineReady = true;
+document.addEventListener('visibilitychange', () => { if (document.hidden) engine.drawn(); });
 
 /* ---------- size ---------- */
 let charW = 0, lineH = 0;

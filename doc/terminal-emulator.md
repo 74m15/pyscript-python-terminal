@@ -16,6 +16,7 @@
 - [Character sets](#character-sets)
 - [Unicode handling](#unicode-handling)
 - [Not supported](#not-supported)
+- [Performance](#performance)
 - [JavaScript API](#javascript-api)
 
 Notation: `ESC` = `\x1b`, `CSI` = `ESC [`, `OSC` = `ESC ]`, `ST` = `ESC \`. `Pn` = numeric parameter (default shown in parentheses). Parameters are separated by `;`, and sub-parameters by `:`.
@@ -342,13 +343,29 @@ These need a reply channel, keyboard or mouse reporting, or hardware features th
 
 ---
 
+## Performance
+
+Full-screen animations send thousands of colour codes per frame. The emulator is built so that this costs as little as possible, without changing what is shown:
+
+| Stage | What it does |
+|---|---|
+| Parsing | `write()` walks the text by index. A run of ordinary printable characters (one cell wide, no control codes, ASCII-compatible character set, no insert mode or single shift) is stored in one tight loop. The digits and `;` of a CSI sequence are copied in one slice. Other characters go through the full state machine. |
+| SGR | The attribute that results from *(current attributes, default attributes, parameters)* is cached, so a repeated `ESC[38;2;0;255;70m` is one map lookup. Attributes are interned objects, compared by identity. |
+| Frames | Drawing happens at most once per animation frame (`requestAnimationFrame`). Many writes between two frames cost one render of the final state. |
+| Lines | Only lines changed since the last frame are rebuilt. Neighbouring cells that *look* the same (same CSS, class and link) share one `<span>`. The markup of on-screen lines is remembered and a line whose new markup is identical is not touched (programs that repaint everything); lines with no markup at all are set with `textContent`. |
+| Layout | `.tl` has `contain: content`, so a changed line is laid out without re-checking its neighbours. |
+
+The page also tells Python when a frame has been drawn (`onRender` → `engine.drawn()`), so `time.sleep()` in an animation waits for the screen instead of queuing frames. See [Back-pressure](architecture.md#back-pressure-python-waits-for-the-screen).
+
+---
+
 ## JavaScript API
 
 ```js
 import { Terminal } from './terminal.js';
 
 const term = new Terminal(rootElement, {
-  onRender: () => {},          // called after every DOM update
+  onRender: () => {},          // called after every DOM update (PyTerm: scroll to the bottom, engine.drawn())
   onBell:   () => {},          // BEL received
   onTitle:  (title) => {},     // OSC 0 / 2
 });

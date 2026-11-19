@@ -501,4 +501,6 @@ Or call micropip directly: `import micropip; await micropip.install("pyfiglet")`
 - `time.sleep()` works and output appears while the program runs.
 - Programs can't start subprocesses or real threads.
 - Packages from PyPI: list them in `requires` (see above) or install them with `pyterm.ainstall()`. C-extension packages work only if Pyodide ships them.
-- Animations: draw a frame, then `time.sleep()` a little. The sleep lets output reach the screen and lets Stop work instantly.
+- Animations: draw a frame, then `time.sleep()` (or `await asyncio.sleep()`) a little. The sleep lets output reach the screen and lets Stop work instantly.
+- **The screen sets the pace.** Before sleeping, `time.sleep()` and `asyncio.sleep()` wait until the page has drawn what was printed (at most 1 second). The wait counts as part of the sleep, so on a fast computer an animation runs at the speed you chose, and on a slow one it slows down smoothly instead of falling behind and piling up frames. You don't need to do anything for this. To keep it working, sleep once per frame (even `time.sleep(0.01)`): a loop that never sleeps can't be held back, and its frames reach the screen in bursts.
+- Send each frame in one go (build it in a string or with `termgfx.Screen`, then print and flush once), and only redraw what changed: fewer, larger writes are drawn much faster than many small ones.

@@ -134,7 +134,9 @@ _orig_sleep = time.sleep
 
 
 def _sleep(seconds):
-    """time.sleep that keeps output flowing, can be stopped, and works in the worker."""
+    """time.sleep that keeps output flowing, can be stopped, and works in the worker.
+    It first waits until the page has drawn what was printed (counted in the sleep), so an
+    animation never runs ahead of the screen."""
     pyterm._flush()
     seconds = max(0.0, float(seconds))
     try:
@@ -156,6 +158,10 @@ def _sleep(seconds):
         shared = False
     if shared:
         end = time.monotonic() + seconds
+        try:
+            host.wait_drawn(1000)
+        except Exception:
+            pass
         cell = js.Int32Array.new(js.SharedArrayBuffer.new(4))
         while True:
             left = end - time.monotonic()
@@ -167,6 +173,26 @@ def _sleep(seconds):
 
 
 time.sleep = _sleep
+
+_orig_asleep = asyncio.sleep
+
+
+async def _asleep(delay, result=None):
+    """asyncio.sleep that, like time.sleep, first lets the page draw pending output."""
+    try:
+        wait = float(delay) > 0
+    except (TypeError, ValueError):
+        wait = False
+    if wait:
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        pyterm._flush()
+        await host.drain(1000)
+        delay = max(0.0, float(delay) - (loop.time() - start))
+    return await _orig_asleep(delay, result)
+
+
+asyncio.sleep = _asleep
 
 
 def set_size(cols, rows):
