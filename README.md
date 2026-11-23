@@ -51,7 +51,7 @@ Your name? Ada
 - **Upload** dialog (Ctrl/Cmd+U or drag & drop): files, whole folders and Puter Drive files, with progress.
 - **ZIP and tar(.gz/.bz2/.xz) archives are extracted** safely (no path traversal, no links), optionally into their own folder.
 - Choose the destination folder and what happens on name conflicts (keep both, replace, skip).
-- **`~/browser` is saved in the browser** (IndexedDB) and is still there after a reload.
+- **`/storage/browser` is saved in the browser** (IndexedDB) and is still there after a reload; `~/browser` and `~/storage` are links into `/storage`. `/storage/local` is reserved for folders of your computer (future version).
 - `download("file-or-folder")` sends files back to your computer or Puter Drive (folders are zipped).
 - See [doc/files-and-upload.md](doc/files-and-upload.md).
 
@@ -92,7 +92,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 ├── index.html        # Page layout, styles, dialogs (shortcuts, upload)
 ├── app.js            # UI controller: input line, input() prompts, history, completion, toolbar, programs menu
 ├── engine.js         # PythonEngine: starts the worker, request/response protocol, input replies, Stop
-├── py-worker.js      # Web Worker: loads Pyodide, output batching, stdin, interrupts, ~/browser persistence
+├── py-worker.js      # Web Worker: loads Pyodide, output batching, stdin, interrupts, /storage/browser persistence
 ├── repl.py           # Python side: interactive console, input()/stdin, scripts, run(), uploads, archives, demo()
 ├── pylib/pyterm/     # The `pyterm` package for programs: console, packages, programs, sso, _bridge
 ├── sso.js            # Google Identity Services + Microsoft MSAL sign-in (main thread)
@@ -116,7 +116,7 @@ The first load downloads the Python runtime (about 10 MB, then cached by the bro
 | [doc/README.md](doc/README.md) | Documentation index |
 | [doc/user-guide.md](doc/user-guide.md) | Using the REPL: prompts, input(), Stop, shortcuts, toolbar, packages, examples |
 | [doc/custom-programs.md](doc/custom-programs.md) | Writing interactive terminal programs and adding them to the Programs menu |
-| [doc/files-and-upload.md](doc/files-and-upload.md) | Upload dialog, archives, conflict handling, `~/browser`, downloads |
+| [doc/files-and-upload.md](doc/files-and-upload.md) | Upload dialog, archives, conflict handling, `/storage/browser`, downloads |
 | [doc/sso.md](doc/sso.md) | Google / Microsoft sign-in and access tokens for Python programs (`pyterm.sso`) |
 | [doc/architecture.md](doc/architecture.md) | How the pieces fit together, boot sequence, data flow |
 | [doc/python-bridge.md](doc/python-bridge.md) | The page ↔ worker protocol and `repl.py` internals |

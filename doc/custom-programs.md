@@ -211,7 +211,9 @@ The functions below live in `pyterm.console` and are re-exported by `pyterm`.
 | Name | Description |
 |---|---|
 | `pyterm.HOME` | `/home/pyodide` |
-| `pyterm.BROWSER_DIR` | `/home/pyodide/browser` — saved in the browser |
+| `pyterm.STORAGE_DIR` | `/storage` — folders kept outside Python's memory (`~/storage` links to it) |
+| `pyterm.BROWSER_DIR` | `/storage/browser` — saved in the browser (`~/browser` links to it) |
+| `pyterm.LOCAL_DIR` | `/storage/local` — reserved for folders of your computer (a future version); empty for now |
 | `pyterm.download(path, name=None)` | Send a file (or a folder, zipped) to the user's computer / Puter Drive |
 
 ### Packages
@@ -271,14 +273,14 @@ app = pyterm.App(name="app", *, prompt=None, intro=None, history=True, color="cy
 
 ## Saving data between visits
 
-Everything under `/home/pyodide/browser` (`pyterm.BROWSER_DIR`) is stored in the browser's IndexedDB and is still there after a reload. The to-do example keeps its tasks in `~/browser/todo.json`:
+Everything under `/storage/browser` (`pyterm.BROWSER_DIR`, also reachable as `~/browser`) is stored in the browser's IndexedDB and is still there after a reload. The to-do example keeps its tasks in `~/browser/todo.json`:
 
 ```python
 import json, os, pyterm
 STORE = os.path.join(pyterm.BROWSER_DIR, "myapp.json")
 ```
 
-Other folders live in memory only. See [Files & Upload](files-and-upload.md).
+Prefer `pyterm.BROWSER_DIR` over a hard-coded path. Older programs that use `~/browser/…` or `/home/pyodide/browser/…` keep working through the link. Other folders live in memory only. See [Files & Upload](files-and-upload.md).
 
 ## Adding a program to the Programs menu
 
@@ -371,7 +373,7 @@ Only the parent page can send `pyterm:load-programs`; `url: null` restores the d
 
 - The other site must allow cross-origin reads (**CORS**, `Access-Control-Allow-Origin: *` or PyTerm's address) for the index.json **and** the program files. GitHub Pages, jsDelivr and `raw.githubusercontent.com` do. Without it the error says *could not be reached … (CORS)*.
 - Only `http://` and `https://` addresses are accepted.
-- Programs run with access to everything in PyTerm (your files, `~/browser`, sign-in tokens they ask for). Load lists you trust.
+- Programs run with access to everything in PyTerm (your files, `/storage/browser`, sign-in tokens they ask for). Load lists you trust.
 - A start-up program (`autoplay` or `&program=`) from a list on **another site given in the address** (`?programs=`) does not start by itself: PyTerm asks first, with an *Always trust this site* option. Lists chosen in the UI, set in HTML / `PYTERM_CONFIG` by the site owner, or on PyTerm's own site start without asking.
 - `~/programs` holds the files of one list at a time: when a program of a different list starts, the previous list's files are removed so modules with the same name can't mix.
 
@@ -496,7 +498,7 @@ Or call micropip directly: `import micropip; await micropip.install("pyfiglet")`
 ## Tips and limits
 
 - **Interactive `input()` needs** WebAssembly stack switching (JSPI: current Chrome, Edge and Firefox) or a cross-origin isolated page. Otherwise it raises an error that points to `await pyterm.ainput()` / `await app.arun()`, which work everywhere.
-- **Stopping busy loops.** On normal hosting (no cross-origin isolation) Stop interrupts programs that are waiting (for input, `time.sleep`, `await`) instantly, but a pure CPU loop can only be stopped by restarting Python, which clears variables. `~/browser` is kept.
+- **Stopping busy loops.** On normal hosting (no cross-origin isolation) Stop interrupts programs that are waiting (for input, `time.sleep`, `await`) instantly, but a pure CPU loop can only be stopped by restarting Python, which clears variables. `/storage/browser` (`~/browser`) is kept.
 - `curses`, `prompt_toolkit`, `textual` and other full-screen frameworks that need raw key presses don't work: input is line-based.
 - `time.sleep()` works and output appears while the program runs.
 - Programs can't start subprocesses or real threads.

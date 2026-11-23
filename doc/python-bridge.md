@@ -20,7 +20,7 @@ How the page (`app.js` / `engine.js`) talks to the Python worker (`py-worker.js`
 ```
  Page (engine.js)                                   Worker (py-worker.js → repl.py)
  ─────────────────                                  ───────────────────────────────
- init {interrupt?, stdin?, drawn?,      ──────────►  loadPyodide, mount ~/browser, run repl.py
+ init {interrupt?, stdin?, drawn?,      ──────────►  loadPyodide, mount /storage/browser, run repl.py
        cols, rows}
                                         ◄──────────  status {text} … ready {version, persist, shared, interrupt, jspi}
  push {id, line}                        ──────────►  push(line)
@@ -51,12 +51,12 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `extract` | `name`, `data`, `dest`, `policy`, `subfolder` | `{dest, files, skipped, renamed, blocked, kind}` | ZIP / tar extraction |
 | `tree` | `path`, `limit` | — | Prints a coloured tree |
 | `read` | `path` | `{name, data: Uint8Array}` | A file, or a folder as a ZIP |
-| `sync` | — | — | Saves `~/browser` to IndexedDB now |
+| `sync` | — | — | Saves `/storage/browser` to IndexedDB now |
 | `input_reply` | `text`, `status` | — | Answers a `via:'msg'` input request |
 | `rpc_result` | `rid`, then `json` (string) + `blobs` (ArrayBuffers, transferred) or `error: {code, message}` | — | Answers an `rpc` request. Sent with `engine.rpcReply(req, value, blobs, error)` |
 | `interrupt` | — | — | Ctrl+C / Stop |
 | `size` | `cols`, `rows` | — | Applied before the next request |
-| `flush_fs` | — | — | Save `~/browser` (page hidden or closing) |
+| `flush_fs` | — | — | Save `/storage/browser` (page hidden or closing) |
 | `drawn` | `seq` | — | The page has drawn every `out` message up to `seq`. Sent by `engine.drawn()` after each terminal render, and right away while the tab is hidden. Releases sleeps waiting for the screen ([back-pressure](architecture.md#back-pressure-python-waits-for-the-screen)) |
 
 `status` for input replies: `1` = a line, `2` = EOF (Ctrl+D → `EOFError`), `3` = interrupt (Ctrl+C → `KeyboardInterrupt`), `4` = Stop button (→ `pyterm.StopProgram`, ends the program).
@@ -170,7 +170,7 @@ asyncio re-raises `SystemExit` and `KeyboardInterrupt` out of the event loop, wh
 | `time.sleep` | `run_sync(host.sleep(ms))` when possible (Stop wakes it, the worker stays responsive), otherwise `host.wait_drawn(1000)` then `Atomics.wait` in 100 ms slices on isolated pages. Either way it first waits for the page to draw pending output; that wait is part of the requested time |
 | `asyncio.sleep` | `await host.drain(1000)` then the original `asyncio.sleep` for the time that is left. A delay of `0` (yield to the loop) never waits for the page |
 
-`read_line()` prefers **JSPI** (`pyodide.ffi.run_sync`), which suspends Python while the worker's event loop keeps running (so `~/browser` can still be saved). It falls back to **shared-memory blocking**, and otherwise raises a `RuntimeError` that suggests `await pyterm.ainput()`.
+`read_line()` prefers **JSPI** (`pyodide.ffi.run_sync`), which suspends Python while the worker's event loop keeps running (so `/storage/browser` can still be saved). It falls back to **shared-memory blocking**, and otherwise raises a `RuntimeError` that suggests `await pyterm.ainput()`.
 
 ### `push(line)`
 
@@ -243,6 +243,20 @@ See [Files & Upload](files-and-upload.md).
 | `COLUMNS`, `LINES` | Current terminal size |
 
 The current directory at start is `/home/pyodide`.
+
+## File system layout
+
+| Path | What it is |
+|---|---|
+| `/home/pyodide` | Home folder and current directory (memory) |
+| `/storage/browser` | Saved folder, mounted on IDBFS (IndexedDB) |
+| `/storage/local` | Reserved for folders of the user's computer (a future version); empty for now |
+| `~/browser` | Symbolic link to `/storage/browser` |
+| `~/storage` | Symbolic link to `/storage` |
+| `~/programs` | Programs of the list in use and their libraries (memory) |
+| `~/.pyterm/pyterm` | The `pyterm` package |
+
+The worker creates `/storage` and the links before `repl.py` runs. If `/storage/browser` is empty at start and the old IndexedDB database of `/home/pyodide/browser` (earlier versions) has files, they are copied into `/storage/browser` once and the old database is emptied.
 
 ## Calling the browser from Python
 

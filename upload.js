@@ -30,11 +30,19 @@ function isArchiveBytes(buf, name) {
   return false;
 }
 
+// Destination relative to /home/pyodide. "/storage/…" becomes "storage/…", which reaches
+// /storage through the ~/storage link.
 function cleanDest(v) {
   let d = String(v || '').trim().replace(/\\/g, '/');
   d = d.replace(/^~\/?/, '').replace(/^\/home\/pyodide\/?/, '');
   d = d.split('/').filter((p) => p && p !== '.' && p !== '..').join('/');
   return d || 'Upload';
+}
+
+// ~/browser and ~/storage/browser both lead to /storage/browser, the folder kept in IndexedDB.
+function isSaved(d) {
+  const p = String(d || '').split('/');
+  return p[0] === 'browser' || (p[0] === 'storage' && p[1] === 'browser');
 }
 
 async function readAllEntries(reader) {
@@ -102,7 +110,7 @@ export function createUploader({ engine, inPuter, P, log, isReady, isBusy, notif
       b.type = 'button';
       b.className = 'chip';
       b.textContent = '~/' + d;
-      b.title = d === 'browser' ? 'Saved in this browser — survives reloads' : '/home/pyodide/' + d;
+      b.title = d === 'browser' ? 'Link to /storage/browser — saved in this browser, survives reloads' : '/home/pyodide/' + d;
       b.onclick = () => { $('up-dest').value = d; updateWarn(); };
       box.appendChild(b);
     }
@@ -113,7 +121,7 @@ export function createUploader({ engine, inPuter, P, log, isReady, isBusy, notif
     const w = $('up-warn');
     const msgs = [];
     if (total > BIG) msgs.push(`That's ${human(total)}. Python keeps files in memory, so very large uploads can slow down or crash the tab.`);
-    if (cleanDest($('up-dest').value).split('/')[0] === 'browser') msgs.push('Files in ~/browser are saved in this browser and are still there after a reload.');
+    if (isSaved(cleanDest($('up-dest').value))) msgs.push('Files in ~/browser (/storage/browser) are saved in this browser and are still there after a reload.');
     w.textContent = msgs.join(' ');
     w.classList.toggle('hidden', !msgs.length);
     w.classList.toggle('text-amber-300', total > BIG);
@@ -267,7 +275,7 @@ export function createUploader({ engine, inPuter, P, log, isReady, isBusy, notif
     if (r.files || r.extracted) {
       if (!busyNow) {
         try { await engine.call('tree', { path: dest, limit: 40 }); } catch {}
-        if (dest.split('/')[0] !== 'browser') log(`Open them in Python with paths like open("${dest}/…"). Use ~/browser to keep files after a reload.\n`, 'info');
+        if (!isSaved(dest)) log(`Open them in Python with paths like open("${dest}/…"). Use ~/browser to keep files after a reload.\n`, 'info');
       }
       try { await engine.call('sync'); } catch {}
     }

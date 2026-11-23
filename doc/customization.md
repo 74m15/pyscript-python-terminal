@@ -259,7 +259,7 @@ The latest version is on npm (`pyodide`) and in the Pyodide changelog. After upg
 
 - `pyodide.console.PyodideConsole` still has `push`, `complete`, `buffer` and an async `runcode(source, code)`; the future from `push` still has `syntax_check` and `formatted_error`.
 - `pyodide.ffi.run_sync` / `can_run_sync` (stack switching) and `setInterruptBuffer` still exist.
-- `FS.filesystems.IDBFS` and `FS.syncfs` are still exported (used for `~/browser`).
+- `FS.filesystems.IDBFS`, `FS.syncfs` and `FS.symlink` are still exported (used for `/storage/browser` and the `~/browser` / `~/storage` links).
 
 ## Theme colour and icon
 

@@ -35,12 +35,14 @@ except ImportError:  # pragma: no cover - outside Pyodide
 
 __all__ = [
     "App", "run", "input", "ainput", "confirm", "choose", "table", "style", "StopProgram",
-    "clear", "title", "download", "HOME", "BROWSER_DIR",
+    "clear", "title", "download", "HOME", "BROWSER_DIR", "STORAGE_DIR", "LOCAL_DIR",
     "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "WHITE", "GREY", "BOLD", "DIM", "RESET",
 ]
 
 HOME = "/home/pyodide"
-BROWSER_DIR = HOME + "/browser"
+STORAGE_DIR = "/storage"                # also ~/storage
+BROWSER_DIR = STORAGE_DIR + "/browser"  # saved in the browser (IndexedDB); also ~/browser
+LOCAL_DIR = STORAGE_DIR + "/local"      # folders of the computer: /storage/local/<name>
 
 # Current program context (set by App.run / the PyTerm launcher).
 _context = {"history": None, "completions": None}

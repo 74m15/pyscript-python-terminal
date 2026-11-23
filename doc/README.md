@@ -14,7 +14,7 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
    `pyterm.sso`: OAuth access tokens for Python programs, provider setup, `sso.json`, token renewal, examples.
 
 3. **[Files & Upload](files-and-upload.md)**
-   The Upload dialog, folders and Puter Drive, archive extraction, name conflicts, the persistent `~/browser` folder, and downloading files from Python.
+   The Upload dialog, folders and Puter Drive, archive extraction, name conflicts, the persistent `/storage/browser` folder (`~/browser`), and downloading files from Python.
 
 4. **[Architecture](architecture.md)**
    The source files and their responsibilities, the boot sequence, how input travels to the worker and output comes back, rendering, persistence.
@@ -44,7 +44,8 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
 | Runtime | Pyodide 314.0.7 → CPython 3.14.2 (WebAssembly), in a module Web Worker |
 | Terminal type | `xterm-256color` (`COLORTERM=truecolor`) |
 | Home folder | `/home/pyodide` (current directory at start) |
-| Saved folder | `/home/pyodide/browser` (IndexedDB, survives reloads) |
+| Saved folder | `/storage/browser` (IndexedDB, survives reloads); `~/browser` links to it |
+| Storage root | `/storage` (`~/storage` links to it); `/storage/local` is reserved for computer folders |
 | Scrollback | 5,000 lines |
 | History | 500 commands per prompt, per browser tab session |
 | Build step | None — static files |

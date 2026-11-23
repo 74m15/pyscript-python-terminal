@@ -40,7 +40,7 @@ After editing a file, reload the page. If an old version keeps loading, do a har
 | `index.html` | HTML/CSS | Layout, styles, dialogs |
 | `app.js` | JS (ES module) | UI controller |
 | `engine.js` | JS (ES module) | Page side of the worker protocol |
-| `py-worker.js` | JS (module worker) | Loads Pyodide, output, stdin, interrupts, `~/browser` |
+| `py-worker.js` | JS (module worker) | Loads Pyodide, output, stdin, interrupts, `/storage` and its links |
 | `upload.js` | JS (ES module) | Upload dialog |
 | `terminal.js` | JS (ES module) | Terminal emulator |
 | `repl.py` | Python 3.14 | Console, stdin, scripts, `run()`, uploads, archives |
@@ -129,7 +129,8 @@ Run through this after making changes:
 - [ ] Upload the same file again with *Keep both*: `name (1).ext` is created.
 - [ ] Upload a ZIP with folders: it is extracted; with *Into a folder…* it goes in its own folder.
 - [ ] Drop a folder: structure is kept.
-- [ ] Write `browser/x.txt`, reload: it is still there.
+- [ ] Write `browser/x.txt`, reload: it is still there, also as `/storage/browser/x.txt`.
+- [ ] `os.path.realpath("browser")` is `/storage/browser`, `os.path.realpath("storage")` is `/storage`, and `/storage/local` exists (empty).
 - [ ] `download("browser")` downloads `browser.zip`.
 
 **Terminal**

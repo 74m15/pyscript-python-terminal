@@ -7,7 +7,11 @@
 //   switching (run_sync) suspends Python while the worker keeps receiving messages.
 // - Ctrl+C / Stop uses Pyodide's interrupt buffer when shared memory is available, and
 //   cancels pending awaits otherwise. The page can always terminate the worker (hard stop).
-// - /home/pyodide/browser is an IndexedDB-backed folder (Emscripten IDBFS) that survives reloads.
+// - /storage is the root of the folders kept outside Python's memory:
+//     /storage/browser        IndexedDB-backed folder (Emscripten IDBFS) that survives reloads
+//     /storage/local/<name>   folders of the computer (reserved, mounted in a future version)
+//   ~/browser and ~/storage are links to /storage/browser and /storage. Files saved by older
+//   versions in the old /home/pyodide/browser database are moved to /storage/browser once.
 // - Back-pressure: every output message has a sequence number and the page answers {type:'drawn'}
 //   once it has shown it. time.sleep() / asyncio.sleep() first wait (up to DRAIN_MAX ms) until the
 //   page has caught up, so a fast animation can never queue more frames than the page can draw.
@@ -15,7 +19,10 @@
 import { loadPyodide } from 'https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.mjs';
 
 const HOME = '/home/pyodide';
-const PERSIST_DIR = HOME + '/browser';
+const STORAGE_DIR = '/storage';
+const PERSIST_DIR = STORAGE_DIR + '/browser';
+const LOCAL_DIR = STORAGE_DIR + '/local';
+const OLD_PERSIST_DIR = HOME + '/browser'; // where ~/browser was mounted before /storage existed
 const dec = new TextDecoder();
 
 let py = null;
@@ -102,18 +109,69 @@ function syncOut() {
   syncing = new Promise((resolve) => {
     try {
       py.FS.syncfs(false, (err) => {
-        if (err) console.warn('PyTerm: could not save ~/browser', err);
+        if (err) console.warn('PyTerm: could not save /storage/browser', err);
         syncing = null;
         resolve();
         if (syncAgain) { syncAgain = false; syncOut(); }
       });
     } catch (e) {
-      console.warn('PyTerm: could not save ~/browser', e);
+      console.warn('PyTerm: could not save /storage/browser', e);
       syncing = null;
       resolve();
     }
   });
   return syncing;
+}
+
+const syncfs = (populate) => new Promise((resolve, reject) => py.FS.syncfs(populate, (err) => (err ? reject(err) : resolve())));
+const entries = (dir) => py.FS.readdir(dir).filter((n) => n !== '.' && n !== '..');
+
+function copyTree(src, dst) {
+  let n = 0;
+  for (const name of entries(src)) {
+    const from = `${src}/${name}`, to = `${dst}/${name}`;
+    const st = py.FS.lstat(from);
+    if (py.FS.isDir(st.mode)) {
+      py.FS.mkdirTree(to);
+      n += copyTree(from, to);
+    } else if (py.FS.isFile(st.mode)) {
+      py.FS.writeFile(to, py.FS.readFile(from));
+      try { py.FS.utime(to, +st.mtime, +st.mtime); } catch {}
+      n++;
+    }
+  }
+  return n;
+}
+
+// IDBFS names its database after the mount point. Files saved by versions that mounted the folder
+// at ~/browser are copied into /storage/browser (only while it is still empty), and the old
+// database is emptied so this happens once.
+async function migrateOldBrowserFolder() {
+  if (entries(PERSIST_DIR).length) return 0;
+  py.FS.mkdirTree(OLD_PERSIST_DIR);
+  py.FS.mount(py.FS.filesystems.IDBFS, {}, OLD_PERSIST_DIR);
+  let moved = 0;
+  try {
+    await syncfs(true);
+    moved = copyTree(OLD_PERSIST_DIR, PERSIST_DIR);
+    if (moved) {
+      for (const name of entries(OLD_PERSIST_DIR)) removeTree(`${OLD_PERSIST_DIR}/${name}`);
+      await syncfs(false);
+    }
+  } finally {
+    py.FS.unmount(OLD_PERSIST_DIR);
+    py.FS.rmdir(OLD_PERSIST_DIR);
+  }
+  return moved;
+}
+
+function link(target, path) {
+  try {
+    if (py.FS.analyzePath(path).exists) return;
+    py.FS.symlink(target, path);
+  } catch (e) {
+    console.warn('PyTerm: could not create the link', path, e);
+  }
 }
 
 function scheduleSync(delay = 250) {
@@ -247,15 +305,26 @@ async function init(m) {
     if (interruptBuf) py.setInterruptBuffer(interruptBuf);
 
     self.postMessage({ type: 'status', text: 'Opening your browser folder…' });
+    py.FS.mkdirTree(PERSIST_DIR);
+    py.FS.mkdirTree(LOCAL_DIR);
     try {
-      py.FS.mkdirTree(PERSIST_DIR);
       py.FS.mount(py.FS.filesystems.IDBFS, {}, PERSIST_DIR);
-      await new Promise((resolve, reject) => py.FS.syncfs(true, (err) => (err ? reject(err) : resolve())));
+      await syncfs(true);
       persist = true;
     } catch (e) {
       console.warn('PyTerm: persistent folder unavailable', e);
       persist = false;
     }
+    if (persist) {
+      try {
+        const moved = await migrateOldBrowserFolder();
+        if (moved) console.info(`PyTerm: moved ${moved} file(s) from ~/browser to /storage/browser`);
+      } catch (e) {
+        console.warn('PyTerm: could not move the files of the old ~/browser folder', e);
+      }
+    }
+    link(PERSIST_DIR, HOME + '/browser');
+    link(STORAGE_DIR, HOME + '/storage');
 
     self.postMessage({ type: 'status', text: 'Loading the standard library…' });
     py.registerJsModule('pyterm_host', host);

@@ -20,7 +20,8 @@ from pyodide.console import PyodideConsole
 from pyodide.ffi import to_js
 
 HOME = "/home/pyodide"
-BROWSER_DIR = HOME + "/browser"
+STORAGE_DIR = "/storage"
+BROWSER_DIR = STORAGE_DIR + "/browser"  # ~/browser is a link to it
 PROGRAMS_DIR = HOME + "/programs"
 MAX_REPR = 8000
 VERSION = sys.version.split("\n")[0]

@@ -34,7 +34,7 @@ PyTerm is a static, client-side application. There is no build step, no server-s
 │                                        │     the page is cross-origin        │
 │ Web Worker                             ▼     isolated)                       │
 │   py-worker.js ── loadPyodide(), stdout/stderr batching, stdin, interrupt,   │
-│     │             IDBFS mount for ~/browser, request queue                   │
+│     │             IDBFS mount for /storage/browser, request queue            │
 │     ├── pyterm_host (JS module registered in Python)                         │
 │     ├── repl.py ── SafeConsole, input()/stdin, scripts, uploads, demo()      │
 │     └── ~/.pyterm/pyterm/ (from pylib/pyterm/) ── the pyterm package:        │
@@ -75,7 +75,7 @@ The page the Microsoft sign-in pop-up returns to; MSAL reads the result from it 
 - Loads Pyodide 314.0.7 with `HOME=/home/pyodide`, `TERM`, `COLORTERM`.
 - Batches stdout/stderr into `out` messages (at most one every ~12 ms, or 64 KB), each with a sequence number `seq`.
 - Keeps track of the last `seq` the page has drawn; `time.sleep()` and `asyncio.sleep()` wait for it (back-pressure, at most `DRAIN_MAX` = 1000 ms).
-- Mounts `/home/pyodide/browser` on IDBFS and syncs it.
+- Creates `/storage/browser` and `/storage/local` (reserved for computer folders, a future feature), mounts `/storage/browser` on IDBFS and syncs it, moves files from the old `/home/pyodide/browser` database once, then makes the links `~/browser` → `/storage/browser` and `~/storage` → `/storage`.
 - Registers the `pyterm_host` module, installs the `pyterm` package (`pylib/pyterm/*.py` → `~/.pyterm/pyterm/`), runs `repl.py` and keeps references to its functions.
 - Forwards `rpc` requests from Python to the page and resolves them with `rpc_result`; Stop cancels pending ones.
 - Runs requests one at a time (promise chain); `input_reply`, `interrupt`, `size` and `flush_fs` are handled immediately, even while code runs.
@@ -117,7 +117,8 @@ index.html parsed
            └─ new Worker('py-worker.js', {type:'module'})  ── postMessage {init, cols, rows, [SABs]}
                 ├─ status "Downloading the Python runtime…"  → loader text
                 ├─ loadPyodide(), setStdout/setStderr, setInterruptBuffer (if shared)
-                ├─ status "Opening your browser folder…": mount IDBFS, syncfs(populate)
+                ├─ status "Opening your browser folder…": mount IDBFS on /storage/browser,
+                │    syncfs(populate), one-time move of the old ~/browser data, links ~/browser and ~/storage
                 ├─ status "Loading the standard library…"
                 ├─ registerJsModule('pyterm_host'), write ~/.pyterm/pyterm/*.py
                 ├─ runPython(repl.py)
@@ -171,7 +172,7 @@ If neither mechanism is available (old browsers on a non-isolated page), `input(
 3. Otherwise `engine.sendInterrupt()`:
    - with shared memory, writes `2` (SIGINT) into Pyodide's interrupt buffer, so even a busy `while True:` loop raises `KeyboardInterrupt`;
    - always posts `{type:'interrupt'}`, which cancels every pending asyncio task (stops `await asyncio.sleep()`, `time.sleep()`, network waits).
-4. If Python is still busy 2.5 s later (a CPU loop without shared memory), `hardRestart()` terminates the worker and starts a fresh one. Variables are lost; `~/browser` is kept (it is synced after every request and while waiting for input).
+4. If Python is still busy 2.5 s later (a CPU loop without shared memory), `hardRestart()` terminates the worker and starts a fresh one. Variables are lost; `/storage/browser` is kept (it is synced after every request and while waiting for input).
 
 ## Back-pressure: Python waits for the screen
 
@@ -233,7 +234,7 @@ The size goes to `term.resize()` and to the worker (`{type:'size'}`), which sets
 | Program / input() history | `sessionStorage['pyterm-history:<name>']` | Browser tab session |
 | Font size | `sessionStorage['pyterm-font']` | Browser tab session |
 | Recent upload folders | `sessionStorage['pyterm-upload-dests']` | Browser tab session |
-| Files in `/home/pyodide/browser` | IndexedDB (Emscripten IDBFS) | Until the site's browser data is cleared |
+| Files in `/storage/browser` (`~/browser`) | IndexedDB (Emscripten IDBFS) | Until the site's browser data is cleared |
 | Other files (`~/Upload`, …) | Pyodide's in-memory file system | Until reload or hard restart |
 | Python variables | Worker memory | Until Restart, `exit()`, hard stop or reload |
 | Google access token | Page memory | Until expiry, `sso.logout()` or reload |

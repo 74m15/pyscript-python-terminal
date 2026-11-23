@@ -21,7 +21,7 @@
 | Some packages can't be installed | Only pure-Python wheels and packages built for Pyodide work. |
 | No subprocesses or threads | `subprocess`, `os.fork`, `multiprocessing` and real threads are unavailable. |
 | Raw sockets are unavailable | Use `pyodide.http.pyfetch`; requests are subject to CORS. |
-| Only `~/browser` is saved | Other files, variables and packages are lost on reload. |
+| Only `/storage/browser` (`~/browser`) is saved | Other files, variables and packages are lost on reload. |
 
 ## Common problems
 
@@ -43,7 +43,8 @@
 - Press **Ctrl + D** to send end-of-file or **Ctrl + C** / **Stop** to interrupt.
 
 ### Uploaded files are gone after a reload
-- Only `~/browser` is saved. Upload into `browser` (pick the `~/browser` chip in the Upload dialog) or copy files there with `shutil.copy`.
+- Only `/storage/browser` is saved (`~/browser` is a link to it). Upload into `browser` (pick the `~/browser` chip in the Upload dialog) or copy files there with `shutil.copy`.
+- Files saved by an earlier version in `/home/pyodide/browser` are moved into `/storage/browser` on the first start of the new version, only if `/storage/browser` is still empty.
 - Private / incognito windows may block IndexedDB; the status bar then doesn't show **~/browser saved**.
 
 ### An archive was copied instead of extracted
@@ -92,7 +93,7 @@ CPython 3.14.2 compiled to WebAssembly by Pyodide 314.0.7, running in a Web Work
 No. Everything runs in your browser. Nothing is sent anywhere, apart from downloading the runtime and the packages you use.
 
 **Where are my uploaded files?**
-In Python's own file system inside the tab, under `/home/pyodide/<folder>`. Only `~/browser` is kept after a reload. See [Files & Upload](files-and-upload.md).
+In Python's own file system inside the tab, under `/home/pyodide/<folder>`. Only `/storage/browser` (also reachable as `~/browser`) is kept after a reload. See [Files & Upload](files-and-upload.md).
 
 **Can I use numpy, pandas, matplotlib…?**
 Yes, just `import` them; packages built for Pyodide are loaded automatically. Matplotlib figures are not shown in the terminal, but you can `savefig("browser/plot.png")` and `download("browser/plot.png")`.

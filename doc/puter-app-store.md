@@ -34,7 +34,7 @@ The status bar shows **Puter app** or **Web**.
 | Double-click a `.py` file / "Open With → PyTerm" | `puter.ui.onLaunchedWithItems()`, `puter.ui.onItemsOpened()` | Each file is run in the REPL (needs a [file association](#file-associations)) |
 | Quit | `puter.exit()` | File → Quit |
 
-PyTerm doesn't need sign-in or any user data. It never calls `puter.kv` or `puter.fs` directly; Drive files are touched only through pickers the user opens. The persistent `~/browser` folder lives in the browser's IndexedDB, not on Puter.
+PyTerm doesn't need sign-in or any user data. It never calls `puter.kv` or `puter.fs` directly; Drive files are touched only through pickers the user opens. The persistent `/storage/browser` folder (`~/browser`) lives in the browser's IndexedDB, not on Puter.
 
 ### Running scripts
 

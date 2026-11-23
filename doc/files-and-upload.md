@@ -6,7 +6,7 @@ Python in PyTerm has its own file system. Your home folder is `/home/pyodide` (a
 - [The Upload dialog](#the-upload-dialog)
 - [Archives (ZIP, tar)](#archives-zip-tar)
 - [When a file already exists](#when-a-file-already-exists)
-- [The saved ~/browser folder](#the-saved-browser-folder)
+- [The saved /storage/browser folder](#the-saved-storagebrowser-folder)
 - [Getting files out](#getting-files-out)
 - [Working with uploaded files](#working-with-uploaded-files)
 - [Limits](#limits)
@@ -17,8 +17,18 @@ Python in PyTerm has its own file system. Your home folder is `/home/pyodide` (a
 
 | Path | Stored in | Survives a reload? |
 |---|---|---|
-| `/home/pyodide/browser` (`~/browser`) | IndexedDB in this browser | **Yes** |
+| `/storage/browser` (also `~/browser` and `~/storage/browser`) | IndexedDB in this browser | **Yes** |
+| `/storage/local/<name>` | Reserved for folders of your computer (coming in a future version); empty for now | — |
 | Anything else (`~/Upload`, `/tmp`, …) | Memory | No |
+
+`/storage` holds the folders kept outside Python's memory. Two links in the home folder lead there:
+
+| Link | Points to |
+|---|---|
+| `~/browser` | `/storage/browser` |
+| `~/storage` | `/storage` |
+
+So `open("browser/notes.txt")`, `open("storage/browser/notes.txt")` and `open("/storage/browser/notes.txt")` open the same file. `os.path.realpath("browser")` gives `/storage/browser`.
 
 Files are private to this browser and this site. Nothing is uploaded to a server: "Upload" means copying from your computer *into Python*.
 
@@ -27,7 +37,7 @@ Files are private to this browser and this site. Nothing is uploaded to a server
 Open it with the **Upload** toolbar button, **Ctrl/Cmd + U**, *File → Upload Files…* in Puter, or by dropping files on the window.
 
 1. **Add files**: *Choose files*, *Choose folder* (keeps the folder structure), *Puter Drive* (inside Puter), or drop files and folders on the dashed area. Remove entries with ×. The list shows the total size; archives are tagged.
-2. **Destination folder**: a path inside `/home/pyodide`, default `Upload`. Type a new one (sub-folders like `data/raw` are fine; `..` is removed) or click a recent one. `browser` saves the files permanently.
+2. **Destination folder**: a path inside `/home/pyodide`, default `Upload`. Type a new one (sub-folders like `data/raw` are fine; `..` is removed) or click a recent one. `browser` (or `storage/browser`) saves the files permanently in `/storage/browser`.
 3. **If a file already exists**: keep both, replace, or skip (see below).
 4. **Extract archives** (on by default) and **Into a folder named after each archive** (off by default).
 5. **Upload**. A progress bar shows each file. Cancel stops after the current file.
@@ -89,9 +99,9 @@ With **Into a folder named after each archive**, `photos.zip` is extracted into 
 
 The rule applies to files inside archives too.
 
-## The saved ~/browser folder
+## The saved /storage/browser folder
 
-`/home/pyodide/browser` is an IndexedDB-backed folder (Emscripten IDBFS). It is:
+`/storage/browser` is an IndexedDB-backed folder (Emscripten IDBFS), reached from the home folder through the `~/browser` link. It is:
 
 - loaded when Python starts;
 - saved after every command, upload and program step, while a program is waiting for input, and when the tab is hidden or closed;
@@ -100,6 +110,8 @@ The rule applies to files inside archives too.
 The status bar shows **~/browser saved** when it's active. If the browser blocks IndexedDB (some private modes), the folder still works but is not saved and the badge is hidden.
 
 Clearing the site's data in the browser settings deletes it.
+
+Earlier versions kept this folder directly at `/home/pyodide/browser`. On the first start of the new version, PyTerm moves those files into `/storage/browser` once (only if `/storage/browser` is still empty) and replaces the old folder with the link, so paths like `browser/todo.json` keep working.
 
 ```python
 >>> open("browser/hello.txt", "w").write("still here tomorrow")
@@ -135,7 +147,7 @@ Relative paths start at `/home/pyodide`, so `"Upload/data.csv"` and `"~/Upload/d
 
 ## Limits
 
-- Files are held in memory (plus IndexedDB for `~/browser`). Uploads over **200 MB** show a warning; very large uploads can make the tab slow or crash it.
+- Files are held in memory (plus IndexedDB for `/storage/browser`). Uploads over **200 MB** show a warning; very large uploads can make the tab slow or crash it.
 - Folder upload with *Choose folder* needs a Chromium, Firefox or Safari version that supports folder pickers; dropping folders works in all current browsers.
 - Empty folders inside a dropped folder are not recreated (archives do recreate them).
-- Files in `~/browser` count against the site's browser storage quota.
+- Files in `/storage/browser` count against the site's browser storage quota.
