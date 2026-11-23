@@ -471,11 +471,25 @@ const host = {
   // One-way notification to the page (e.g. a program launched with run() has ended).
   event: (name, json) => { flushOut(); self.postMessage({ type: 'event', name: String(name), data: json ? String(json) : '' }); },
   ...localHost,
-  load_imports: (src) => py.loadPackagesFromImports(String(src), {
+  load_imports: (src) => loadImports(src),
+};
+
+// Pyodide finds the packages a piece of code needs by parsing it, and parsing fails on
+// `await` outside a function — which is legal in PyTerm (the REPL and program files allow
+// top-level await). Such code is parsed again wrapped in `async def …:`, where the same
+// imports are still found, so its packages are loaded like everybody else's.
+function loadImports(src) {
+  const text = String(src == null ? '' : src);
+  if (!/\bimport\b/.test(text)) return Promise.resolve();
+  const opts = {
     messageCallback: (m) => out(m + '\n', 'info'),
     errorCallback: (m) => out(m + '\n', 'err'),
-  }),
-};
+  };
+  const wrapped = 'async def __pyterm_scan__():\n'
+    + (text.split('\n').map((l) => '    ' + l).join('\n') || '    pass') + '\n';
+  return py.loadPackagesFromImports(text, opts)
+    .catch(() => py.loadPackagesFromImports(wrapped, opts));
+}
 
 /* ---------- boot ---------- */
 async function init(m) {

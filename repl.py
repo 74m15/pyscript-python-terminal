@@ -307,6 +307,45 @@ class _ProgramPath:
         return False
 
 
+async def _load_zip_imports(paths):
+    """Load the Pyodide packages imported by library ZIPs on a program's path.
+
+    Libraries given file by file are scanned by the page before the program starts; the
+    code inside a ZIP can't be read there, so it is scanned here instead.
+    """
+    for p in list(paths or [])[:8]:
+        p = str(p)
+        if not p.endswith(".zip") or not os.path.isfile(p):
+            continue
+        try:
+            with zipfile.ZipFile(p) as zf:
+                names = [n for n in zf.namelist() if n.endswith(".py")][:60]
+                for n in names:
+                    try:
+                        src = zf.read(n).decode("utf-8", "replace")
+                    except Exception:
+                        continue
+                    if "import" not in src:
+                        continue
+                    try:
+                        await host.load_imports(src)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+
+def _load_zip_imports_sync(paths):
+    if not _jspi():
+        return
+    try:
+        from pyodide.ffi import run_sync
+
+        run_sync(_load_zip_imports(paths))
+    except Exception:
+        pass
+
+
 def stage_file(name, source, isolated=False, paths=None, requires=None):
     """Called from the worker: remember a script to run with __pyterm_run__()."""
     _staged["name"] = str(name)
@@ -330,6 +369,7 @@ async def _run_staged():
         if not await pyterm.ainstall(requires, label=label):
             _write(f"{os.path.basename(name)} was not started because a required package is missing.\n", "err")
             return None
+    await _load_zip_imports(paths)
     code = _compile(name, source)
     if isolated:
         ns = _fresh_ns(name)
@@ -395,6 +435,11 @@ async def _aexec(code, name, ns, argv, paths):
             await res
 
 
+async def _arun_file(code, name, ns, argv, paths):
+    await _load_zip_imports(paths)
+    await _aexec(code, name, ns, argv, paths)
+
+
 def _exec(code, name, ns, argv, paths):
     # top-level await inside the file is waited for with stack switching
     with _Run(name, argv, paths):
@@ -450,6 +495,7 @@ def _run_program(query, args):
     except LookupError as e:
         raise _not_found(query, e) from None
     code = _program_code(m)
+    run_sync(_load_zip_imports(m["paths"]))
     stop = m.get("onexit") == "stop"
     _program_event(m, "start")
     try:
@@ -470,6 +516,7 @@ async def _arun_program(query, args):
     except LookupError as e:
         raise _not_found(query, e) from None
     code = _program_code(m)
+    await _load_zip_imports(m["paths"])
     stop = m.get("onexit") == "stop"
     _program_event(m, "start")
     try:
@@ -539,7 +586,8 @@ def run(target, *args):
             code = _compile(p, fh.read())
         ns, argv, paths = _fresh_ns(p), [p, *args], _file_paths(p)
         if code.co_flags & inspect.CO_COROUTINE and not _jspi():
-            return _Later(_aexec(code, p, ns, argv, paths), call)
+            return _Later(_arun_file(code, p, ns, argv, paths), call)
+        _load_zip_imports_sync(paths)
         _exec(code, p, ns, argv, paths)
         return _DONE
     if _jspi():

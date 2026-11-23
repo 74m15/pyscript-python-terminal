@@ -42,6 +42,9 @@
 - Click inside the terminal to focus the input line. The prompt is whatever the program printed last on the line (it may be empty).
 - Press **Ctrl + D** to send end-of-file or **Ctrl + C** / **Stop** to interrupt.
 
+### A program says `ModuleNotFoundError` for a package its ZIP library imports
+- Fixed: the packages a library needs (numpy, …) are now loaded even when the library lives in a ZIP, and even when the program itself uses `await` outside a function. If it still happens, the package is probably not available for Pyodide — install it with `pyterm.require("name")` or list it in `"requires"` in `index.json`.
+
 ### Uploaded files are gone after a reload
 - Only `/storage/browser` is saved (`~/browser` is a link to it). Upload into `browser` (pick the `~/browser` chip in the Upload dialog) or copy files there with `shutil.copy`.
 - Files saved by an earlier version in `/home/pyodide/browser` are moved into `/storage/browser` on the first start of the new version, only if `/storage/browser` is still empty.

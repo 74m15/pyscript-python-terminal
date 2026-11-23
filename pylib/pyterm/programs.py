@@ -87,13 +87,20 @@ async def aprepare(query, *, refresh=False, quiet=False, animate=True):
             except OSError:
                 pass
     if any("import" in s for s in sources):
-        # Pyodide packages they import (numpy, …), with "Loading …" messages in the terminal
+        # Pyodide packages they import (numpy, …), with "Loading …" messages in the terminal.
+        # One file at a time: a file with top-level await (or any file that doesn't parse on
+        # its own) must not stop the others from being scanned.
         try:
             import pyterm_host
-
-            await pyterm_host.load_imports("\n".join(sources))
-        except Exception:
-            pass
+        except ImportError:
+            pyterm_host = None
+        for src in sources:
+            if pyterm_host is None or "import" not in src:
+                continue
+            try:
+                await pyterm_host.load_imports(src)
+            except Exception:
+                pass
     if m.get("requires"):
         from .packages import ainstall
 

@@ -455,7 +455,7 @@ Programs in `programs/` can `import` code from **library folders** (packages) or
 1. PyTerm downloads the program and its libraries and copies them into **`/home/pyodide/programs`**, keeping the same layout as on the site (`~/programs/screensaver.py`, `~/programs/termgfx/screen.py`, `~/programs/mytools.zip`).
 2. While the program runs, `sys.path` starts with the program's folder, `~/programs` and every ZIP library, and `PYTHONPATH` is set to the same list. So `import termgfx`, `from savers.cube import RotatingCube` or `import mytools` just work, and libraries can import each other (the `savers` scenes import `termgfx`).
 3. `__file__` is the real path (`/home/pyodide/programs/screensaver.py`), so a program can open data files next to itself.
-4. Pyodide packages imported by the program **or by its libraries** (numpy, …) are loaded first.
+4. Pyodide packages imported by the program **or by its libraries** (numpy, …) are loaded first. This also covers libraries kept in a **ZIP** (their modules are read from inside the archive) and programs that use `await` outside a function.
 5. Packages listed in `requires` (the libraries' first, then the program's) are installed with micropip, with progress shown in the terminal.
 6. When the program ends, `sys.path` and `PYTHONPATH` are restored and the library modules are removed from `sys.modules`. Edit a library, reload the page or just launch the program again, and the new version is used.
 
