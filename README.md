@@ -40,7 +40,7 @@ Your name? Ada
 - **`run("calc")`** starts a program of the menu from Python by id or title, setting it up exactly like the menu (files, libraries, packages).
 - **Programs list from a URL**: use the `index.json` of another site with *Programs → Load programs from URL…*, `?programs=<url>`, `<meta name="pyterm-programs">` / `window.PYTERM_CONFIG` in HTML, `PyTerm.loadPrograms(url)` in JavaScript or `pyterm.programs.load(url)` in Python.
 - **`autoplay`** starts a program when PyTerm opens; **`onexit`** chooses what happens when it ends: back to the `>>>` prompt (`continue`) or Python stops and only Restart is possible (`stop`).
-- The bundled **`pyterm` package** makes command-line apps easy: `pyterm.console` (commands with help, Tab completion, history, colours, tables, yes/no questions and menus), `pyterm.packages`, `pyterm.programs`. See [doc/custom-programs.md](doc/custom-programs.md).
+- The bundled **`pyterm` package** makes command-line apps easy: `pyterm.console` (commands with help, Tab completion, history, colours, tables, yes/no questions and menus), `pyterm.packages`, `pyterm.programs`, `pyterm.storage`. See [doc/custom-programs.md](doc/custom-programs.md).
 
 ### Sign-in with Google and Microsoft
 - **`pyterm.sso`** gives Python programs OAuth 2.0 **access tokens** for Google and Microsoft (Graph, Gmail, Drive, Outlook…), with automatic renewal: silent refresh for Microsoft, one-click renew for Google.
@@ -51,7 +51,7 @@ Your name? Ada
 - **Upload** dialog (Ctrl/Cmd+U or drag & drop): files, whole folders and Puter Drive files, with progress.
 - **ZIP and tar(.gz/.bz2/.xz) archives are extracted** safely (no path traversal, no links), optionally into their own folder.
 - Choose the destination folder and what happens on name conflicts (keep both, replace, skip).
-- **`/storage/browser` is saved in the browser** (IndexedDB) and is still there after a reload; `~/browser` and `~/storage` are links into `/storage`. `/storage/local` is reserved for folders of your computer (future version).
+- **`/storage/browser` is saved in the browser** (IndexedDB) and is still there after a reload; `~/browser` and `~/storage` are links into `/storage`. **`pyterm.storage.mount(name)`** opens a folder of your computer at `/storage/local/<name>` (changes are saved back; `unmount(name)` closes it; Chrome/Edge/Opera on desktop).
 - `download("file-or-folder")` sends files back to your computer or Puter Drive (folders are zipped).
 - See [doc/files-and-upload.md](doc/files-and-upload.md).
 

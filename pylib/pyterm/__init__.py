@@ -7,6 +7,7 @@ Sub-modules:
     pyterm.packages   install PyPI packages with micropip, with progress (ainstall, require)
     pyterm.programs   the programs of programs/index.json (list, find, prepare)
     pyterm.sso        Google / Microsoft sign-in and OAuth access tokens
+    pyterm.storage    folders of the computer under /storage/local/<name> (mount, unmount)
 
 For convenience (and compatibility with older programs) everything in ``console`` plus
 ``ainstall`` / ``require`` is also available directly on ``pyterm``:
@@ -25,6 +26,7 @@ from . import packages
 from .packages import ainstall, require
 from . import programs
 from . import sso
+from . import storage
 
-__all__ = list(_console_all) + ["ainstall", "require", "console", "packages", "programs", "sso"]
+__all__ = list(_console_all) + ["ainstall", "require", "console", "packages", "programs", "sso", "storage"]
 __version__ = "2.0"

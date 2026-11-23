@@ -45,7 +45,7 @@ Welcome to the PyTerm documentation. PyTerm is a browser-based Python REPL with 
 | Terminal type | `xterm-256color` (`COLORTERM=truecolor`) |
 | Home folder | `/home/pyodide` (current directory at start) |
 | Saved folder | `/storage/browser` (IndexedDB, survives reloads); `~/browser` links to it |
-| Storage root | `/storage` (`~/storage` links to it); `/storage/local` is reserved for computer folders |
+| Storage root | `/storage` (`~/storage` links to it); `/storage/local/<name>` holds folders of the computer (`pyterm.storage.mount`) |
 | Scrollback | 5,000 lines |
 | History | 500 commands per prompt, per browser tab session |
 | Build step | None — static files |

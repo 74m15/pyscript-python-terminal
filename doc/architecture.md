@@ -75,9 +75,10 @@ The page the Microsoft sign-in pop-up returns to; MSAL reads the result from it 
 - Loads Pyodide 314.0.7 with `HOME=/home/pyodide`, `TERM`, `COLORTERM`.
 - Batches stdout/stderr into `out` messages (at most one every ~12 ms, or 64 KB), each with a sequence number `seq`.
 - Keeps track of the last `seq` the page has drawn; `time.sleep()` and `asyncio.sleep()` wait for it (back-pressure, at most `DRAIN_MAX` = 1000 ms).
-- Creates `/storage/browser` and `/storage/local` (reserved for computer folders, a future feature), mounts `/storage/browser` on IDBFS and syncs it, moves files from the old `/home/pyodide/browser` database once, then makes the links `~/browser` → `/storage/browser` and `~/storage` → `/storage`.
+- Creates `/storage/browser` and `/storage/local` (folders of the computer, see below), mounts `/storage/browser` on IDBFS and syncs it, moves files from the old `/home/pyodide/browser` database once, then makes the links `~/browser` → `/storage/browser` and `~/storage` → `/storage`.
 - Registers the `pyterm_host` module, installs the `pyterm` package (`pylib/pyterm/*.py` → `~/.pyterm/pyterm/`), runs `repl.py` and keeps references to its functions.
 - Forwards `rpc` requests from Python to the page and resolves them with `rpc_result`; Stop cancels pending ones.
+- Folders of the computer (`pyterm.storage`): receives the `FileSystemDirectoryHandle` the user picked on the page, copies the folder to `/storage/local/<name>` and, at every sync (with `/storage/browser`), writes files Python changed and removes entries Python deleted, using a snapshot of the last sync.
 - Runs requests one at a time (promise chain); `input_reply`, `interrupt`, `size` and `flush_fs` are handled immediately, even while code runs.
 
 ### `repl.py`: Python side
@@ -235,6 +236,7 @@ The size goes to `term.resize()` and to the worker (`{type:'size'}`), which sets
 | Font size | `sessionStorage['pyterm-font']` | Browser tab session |
 | Recent upload folders | `sessionStorage['pyterm-upload-dests']` | Browser tab session |
 | Files in `/storage/browser` (`~/browser`) | IndexedDB (Emscripten IDBFS) | Until the site's browser data is cleared |
+| Folders mounted at `/storage/local/<name>` | The user's computer (copy in worker memory) | Files: on the computer. Mount: until reload or hard restart |
 | Other files (`~/Upload`, …) | Pyodide's in-memory file system | Until reload or hard restart |
 | Python variables | Worker memory | Until Restart, `exit()`, hard stop or reload |
 | Google access token | Page memory | Until expiry, `sso.logout()` or reload |

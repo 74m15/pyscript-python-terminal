@@ -9,7 +9,10 @@
 //   cancels pending awaits otherwise. The page can always terminate the worker (hard stop).
 // - /storage is the root of the folders kept outside Python's memory:
 //     /storage/browser        IndexedDB-backed folder (Emscripten IDBFS) that survives reloads
-//     /storage/local/<name>   folders of the computer (reserved, mounted in a future version)
+//     /storage/local/<name>   folders of the computer, mounted with pyterm.storage.mount(name):
+//                             the page lets the user pick a folder (File System Access API),
+//                             its handle comes here, the files are copied into memory and
+//                             Python's changes are written back on every sync (see below)
 //   ~/browser and ~/storage are links to /storage/browser and /storage. Files saved by older
 //   versions in the old /home/pyodide/browser database are moved to /storage/browser once.
 // - Back-pressure: every output message has a sequence number and the page answers {type:'drawn'}
@@ -65,7 +68,7 @@ function drain(maxMs = DRAIN_MAX) {
 }
 
 // The pyterm package (pylib/pyterm/*.py) is installed in ~/.pyterm/pyterm
-const PYTERM_FILES = ['__init__.py', 'console.py', 'packages.py', 'programs.py', 'sso.py', '_bridge.py'];
+const PYTERM_FILES = ['__init__.py', 'console.py', 'packages.py', 'programs.py', 'sso.py', 'storage.py', '_bridge.py'];
 let persist = false;
 let size = [80, 24];
 let sizeDirty = true;
@@ -104,24 +107,213 @@ let syncAgain = false;
 let syncTimer = 0;
 
 function syncOut() {
-  if (!persist || !py) return Promise.resolve();
+  if (!py || (!persist && !locals.size)) return Promise.resolve();
   if (syncing) { syncAgain = true; return syncing; }
-  syncing = new Promise((resolve) => {
-    try {
-      py.FS.syncfs(false, (err) => {
-        if (err) console.warn('PyTerm: could not save /storage/browser', err);
-        syncing = null;
-        resolve();
-        if (syncAgain) { syncAgain = false; syncOut(); }
-      });
-    } catch (e) {
-      console.warn('PyTerm: could not save /storage/browser', e);
-      syncing = null;
-      resolve();
+  syncing = (async () => {
+    if (persist) {
+      try { await syncfs(false); } catch (e) { console.warn('PyTerm: could not save /storage/browser', e); }
     }
-  });
+    for (const m of [...locals.values()]) {
+      try { await saveLocal(m); } catch (e) { console.warn(`PyTerm: could not save ${m.path} to the computer`, e); }
+    }
+    syncing = null;
+    if (syncAgain) { syncAgain = false; syncOut(); }
+  })();
   return syncing;
 }
+
+/* ---------- folders of the computer: /storage/local/<name> (pyterm.storage) ---------- */
+// Each mount keeps the folder's handle and a snapshot of what Python's copy looked like at the
+// last sync (relative path → {dir, mtime, size}). Saving writes files that changed since then
+// and removes entries Python deleted. Entries that were never in the snapshot (added on the
+// computer after the mount) are never touched; refresh() reads them.
+const LOCAL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const locals = new Map(); // name → {name, path, folder, since, handle, snap}
+let localChain = Promise.resolve();
+
+const localInfo = (m) => ({ name: m.name, path: m.path, folder: m.folder, since: m.since });
+const serial = (fn) => { const p = localChain.then(fn); localChain = p.catch(() => {}); return p; };
+
+async function readLocalTree(handle, dir, rel, snap) {
+  let n = 0;
+  for await (const [name, h] of handle.entries()) {
+    const p = `${dir}/${name}`, r = rel ? `${rel}/${name}` : name;
+    if (h.kind === 'directory') {
+      py.FS.mkdirTree(p);
+      snap.set(r, { dir: true });
+      n += await readLocalTree(h, p, r, snap);
+    } else {
+      const f = await h.getFile();
+      py.FS.writeFile(p, new Uint8Array(await f.arrayBuffer()));
+      try { py.FS.utime(p, f.lastModified, f.lastModified); } catch {}
+      const st = py.FS.stat(p);
+      snap.set(r, { dir: false, mtime: +st.mtime, size: st.size });
+      n++;
+    }
+  }
+  return n;
+}
+
+async function dirHandleOf(root, parts) {
+  let h = root;
+  for (const p of parts) h = await h.getDirectoryHandle(p);
+  return h;
+}
+
+async function writeLocalFile(dh, name, data) {
+  const fh = await dh.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  try { await w.write(data); await w.close(); }
+  catch (e) { try { await w.abort(); } catch {} throw e; }
+}
+
+function saveLocal(m) {
+  return serial(async () => {
+    if (locals.get(m.name) !== m || !py.FS.analyzePath(m.path).exists) return { written: 0, removed: 0 };
+    let written = 0, removed = 0;
+    const seen = new Set();
+    const walk = async (dir, rel, dh) => {
+      for (const name of entries(dir)) {
+        const p = `${dir}/${name}`, r = rel ? `${rel}/${name}` : name;
+        const st = py.FS.lstat(p);
+        const old = m.snap.get(r);
+        if (py.FS.isDir(st.mode)) {
+          seen.add(r);
+          if (old && !old.dir) { try { await dh.removeEntry(name); } catch {} }
+          const sub = await dh.getDirectoryHandle(name, { create: true });
+          m.snap.set(r, { dir: true });
+          await walk(p, r, sub);
+        } else if (py.FS.isFile(st.mode)) {
+          seen.add(r);
+          const cur = { dir: false, mtime: +st.mtime, size: st.size };
+          if (!old || old.dir || old.mtime !== cur.mtime || old.size !== cur.size) {
+            if (old && old.dir) { try { await dh.removeEntry(name, { recursive: true }); } catch {} }
+            await writeLocalFile(dh, name, py.FS.readFile(p));
+            m.snap.set(r, cur);
+            written++;
+          }
+        } // links and other special files stay in Python only
+      }
+    };
+    await walk(m.path, '', m.handle);
+    // entries Python deleted since the last sync (parents first; their children go with them)
+    const gone = [...m.snap.keys()].filter((r) => !seen.has(r)).sort((a, b) => a.length - b.length);
+    const done = [];
+    for (const r of gone) {
+      m.snap.delete(r);
+      if (done.some((d) => r.startsWith(d + '/'))) continue;
+      done.push(r);
+      const parts = r.split('/');
+      const name = parts.pop();
+      try {
+        const dh = await dirHandleOf(m.handle, parts);
+        await dh.removeEntry(name, { recursive: true });
+        removed++;
+      } catch (e) {
+        if (!e || e.name !== 'NotFoundError') throw e;
+      }
+    }
+    return { written, removed };
+  });
+}
+
+function localError(code, e) {
+  const msg = (e && e.message) || String(e);
+  return rpcError(code, msg);
+}
+
+function checkLocalName(name) {
+  const n = String(name == null ? '' : name).trim();
+  if (!LOCAL_NAME.test(n)) throw rpcError('invalid_name', `invalid name ${JSON.stringify(n)}`);
+  return n;
+}
+
+function getLocal(name) {
+  const m = locals.get(checkLocalName(name));
+  if (!m) throw rpcError('not_mounted', `nothing is mounted at ${LOCAL_DIR}/${name}`);
+  return m;
+}
+
+const localHost = {
+  local_list: () => JSON.stringify([...locals.values()].map(localInfo)),
+
+  async local_mount(name) {
+    const n = checkLocalName(name);
+    const path = `${LOCAL_DIR}/${n}`;
+    if (locals.has(n)) throw rpcError('already_mounted', `${path} is already mounted`);
+    const st = py.FS.analyzePath(path);
+    if (st.exists && (!py.FS.isDir(py.FS.lstat(path).mode) || entries(path).length)) {
+      throw rpcError('not_empty', `${path} already exists and is not an empty folder`);
+    }
+    const res = await host.rpc('storage.pick', JSON.stringify({ name: n, path }));
+    const handle = res && res.objects && res.objects.handle;
+    if (!handle || handle.kind !== 'directory') throw rpcError('error', 'no folder was received from the page');
+    if (locals.has(n)) throw rpcError('already_mounted', `${path} is already mounted`);
+    if (typeof handle.queryPermission === 'function') {
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') throw rpcError('denied', 'PyTerm may not change this folder');
+    }
+    return serial(async () => {
+      py.FS.mkdirTree(path);
+      const snap = new Map();
+      try {
+        await readLocalTree(handle, path, '', snap);
+      } catch (e) {
+        removeTree(path);
+        throw localError('error', `could not read the folder: ${(e && e.message) || e}`);
+      }
+      const m = { name: n, path, folder: handle.name, since: Date.now() / 1000, handle, snap };
+      locals.set(n, m);
+      return JSON.stringify(localInfo(m));
+    });
+  },
+
+  async local_unmount(name, save) {
+    const m = getLocal(name);
+    if (save !== false) {
+      try { await saveLocal(m); }
+      catch (e) { throw localError('save_failed', `could not save ${m.path} (still mounted; unmount(name, save=False) drops the changes): ${(e && e.message) || e}`); }
+    }
+    return serial(async () => {
+      locals.delete(m.name);
+      removeTree(m.path);
+      return JSON.stringify(localInfo(m));
+    });
+  },
+
+  async local_save(name) {
+    const list = name == null ? [...locals.values()] : [getLocal(name)];
+    const total = { written: 0, removed: 0 };
+    for (const m of list) {
+      try {
+        const r = await saveLocal(m);
+        total.written += r.written;
+        total.removed += r.removed;
+      } catch (e) {
+        throw localError('save_failed', `could not save ${m.path}: ${(e && e.message) || e}`);
+      }
+    }
+    return JSON.stringify(total);
+  },
+
+  async local_refresh(name) {
+    const m = getLocal(name);
+    try { await saveLocal(m); }
+    catch (e) { throw localError('save_failed', `could not save ${m.path} before reading it again: ${(e && e.message) || e}`); }
+    return serial(async () => {
+      const before = new Set([...m.snap].filter(([, v]) => !v.dir).map(([k]) => k));
+      for (const n of entries(m.path)) removeTree(`${m.path}/${n}`);
+      const snap = new Map();
+      let read;
+      try { read = await readLocalTree(m.handle, m.path, '', snap); }
+      catch (e) { throw localError('error', `could not read the folder: ${(e && e.message) || e}`); }
+      m.snap = snap;
+      let removedCount = 0;
+      for (const k of before) if (!snap.has(k)) removedCount++;
+      return JSON.stringify({ read, removed: removedCount });
+    });
+  },
+};
 
 const syncfs = (populate) => new Promise((resolve, reject) => py.FS.syncfs(populate, (err) => (err ? reject(err) : resolve())));
 const entries = (dir) => py.FS.readdir(dir).filter((n) => n !== '.' && n !== '..');
@@ -175,7 +367,7 @@ function link(target, path) {
 }
 
 function scheduleSync(delay = 250) {
-  if (!persist) return;
+  if (!persist && !locals.size) return;
   clearTimeout(syncTimer);
   syncTimer = setTimeout(syncOut, delay);
 }
@@ -278,6 +470,7 @@ const host = {
   },
   // One-way notification to the page (e.g. a program launched with run() has ended).
   event: (name, json) => { flushOut(); self.postMessage({ type: 'event', name: String(name), data: json ? String(json) : '' }); },
+  ...localHost,
   load_imports: (src) => py.loadPackagesFromImports(String(src), {
     messageCallback: (m) => out(m + '\n', 'info'),
     errorCallback: (m) => out(m + '\n', 'err'),
@@ -481,7 +674,7 @@ self.onmessage = (e) => {
       if (!r) return;
       rpcs.delete(m.rid);
       if (m.error) r.reject(rpcError(m.error.code || 'error', m.error.message || 'Request failed'));
-      else r.resolve({ json: m.json == null ? 'null' : m.json, blobs: (m.blobs || []).map((b) => new Uint8Array(b)) });
+      else r.resolve({ json: m.json == null ? 'null' : m.json, blobs: (m.blobs || []).map((b) => new Uint8Array(b)), objects: m.objects || null });
       return;
     }
     case 'interrupt':

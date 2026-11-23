@@ -53,7 +53,7 @@ Requests carrying an `id` are answered with exactly one `{type:'result', id, val
 | `read` | `path` | `{name, data: Uint8Array}` | A file, or a folder as a ZIP |
 | `sync` | — | — | Saves `/storage/browser` to IndexedDB now |
 | `input_reply` | `text`, `status` | — | Answers a `via:'msg'` input request |
-| `rpc_result` | `rid`, then `json` (string) + `blobs` (ArrayBuffers, transferred) or `error: {code, message}` | — | Answers an `rpc` request. Sent with `engine.rpcReply(req, value, blobs, error)` |
+| `rpc_result` | `rid`, then `json` (string) + `blobs` (ArrayBuffers, transferred) + `objects` (structured-cloneable values for the worker, e.g. a folder handle) or `error: {code, message}` | — | Answers an `rpc` request. Sent with `engine.rpcReply(req, value, blobs, error, objects)` |
 | `interrupt` | — | — | Ctrl+C / Stop |
 | `size` | `cols`, `rows` | — | Applied before the next request |
 | `flush_fs` | — | — | Save `/storage/browser` (page hidden or closing) |
@@ -106,6 +106,11 @@ Registered with `pyodide.registerJsModule('pyterm_host', host)`; used by `repl.p
 | `load_imports(source)` | `pyodide.loadPackagesFromImports(source)` |
 | `rpc(name, argsJson)` | Promise of `{json, blobs}`: a request to the page (below). Rejects with a JSON `{code, message}` error |
 | `event(name, json)` | One-way notification to the page |
+| `local_list()` | JSON list of the folders mounted under `/storage/local` |
+| `local_mount(name)` | Promise of the mount's JSON: sends `storage.pick` to the page, receives the folder handle in `objects`, copies the folder |
+| `local_unmount(name, save)` | Promise: saves (unless `save` is false), removes the folder from Python |
+| `local_save(name\|null)` | Promise of `{written, removed}` |
+| `local_refresh(name)` | Promise of `{read, removed}`: saves, then reads the folder again |
 
 ## Requests from Python to the page (`pyterm._bridge`)
 
@@ -134,6 +139,8 @@ data = _bridge.call("sso.status")                                  # sync, needs
 | `programs.fetch` | `query` | `{files: [path…]}` + one blob per file (read relative to the list's `base`) |
 | `programs.source` | — | `{url, base, name, builtin, via, count}` of the list in use |
 | `programs.load` | `url` (or `null` for the default list) | same as `programs.source`; error code `load_failed` |
+| `storage.supported` | — | `{supported, framed}` |
+| `storage.pick` | `name`, `path` | Shows the folder dialog; answers `{folder}` with the `FileSystemDirectoryHandle` in `objects.handle` (worker only). Errors: `unsupported`, `blocked`, `cancelled`, `denied`, `busy` |
 | `sso.login`, `sso.token`, `sso.logout`, `sso.status`, `sso.configure` | see [Sign-in](sso.md) | token dicts / status |
 
 ### Adding a feature
@@ -250,7 +257,7 @@ The current directory at start is `/home/pyodide`.
 |---|---|
 | `/home/pyodide` | Home folder and current directory (memory) |
 | `/storage/browser` | Saved folder, mounted on IDBFS (IndexedDB) |
-| `/storage/local` | Reserved for folders of the user's computer (a future version); empty for now |
+| `/storage/local/<name>` | Folders of the user's computer mounted with `pyterm.storage.mount(name)` (memory copy, written back to the computer by the worker on every sync) |
 | `~/browser` | Symbolic link to `/storage/browser` |
 | `~/storage` | Symbolic link to `/storage` |
 | `~/programs` | Programs of the list in use and their libraries (memory) |

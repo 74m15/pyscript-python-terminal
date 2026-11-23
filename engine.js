@@ -107,8 +107,10 @@ export class PythonEngine {
   }
 
   /** Answer a request from Python (pyterm._bridge). `req` is the {type:'rpc'} message;
-   *  send a JSON-able value plus optional binary blobs, or an error {code, message}. */
-  rpcReply(req, value, blobs = [], error = null) {
+   *  send a JSON-able value plus optional binary blobs, or an error {code, message}.
+   *  `objects` ({key: value}) carries structured-cloneable objects for the worker itself
+   *  (e.g. a FileSystemDirectoryHandle for pyterm.storage); Python doesn't see them. */
+  rpcReply(req, value, blobs = [], error = null, objects = null) {
     if (!this.worker || !req || req.gen !== this.gen) return;
     const rid = req.rid;
     if (error) {
@@ -119,7 +121,7 @@ export class PythonEngine {
     let json;
     try { json = JSON.stringify(value === undefined ? null : value); }
     catch (e) { this.rpcReply(req, null, [], { code: 'error', message: 'Answer is not JSON: ' + e.message }); return; }
-    this.worker.postMessage({ type: 'rpc_result', rid, json, blobs: bufs }, bufs);
+    this.worker.postMessage({ type: 'rpc_result', rid, json, blobs: bufs, objects: objects || null }, bufs);
   }
 
   /** status: 1 = line, 2 = EOF (Ctrl+D), 3 = KeyboardInterrupt (Ctrl+C), 4 = StopProgram (Stop button) */

@@ -7,6 +7,7 @@ Python in PyTerm has its own file system. Your home folder is `/home/pyodide` (a
 - [Archives (ZIP, tar)](#archives-zip-tar)
 - [When a file already exists](#when-a-file-already-exists)
 - [The saved /storage/browser folder](#the-saved-storagebrowser-folder)
+- [Folders of your computer (/storage/local)](#folders-of-your-computer-storagelocal)
 - [Getting files out](#getting-files-out)
 - [Working with uploaded files](#working-with-uploaded-files)
 - [Limits](#limits)
@@ -18,7 +19,7 @@ Python in PyTerm has its own file system. Your home folder is `/home/pyodide` (a
 | Path | Stored in | Survives a reload? |
 |---|---|---|
 | `/storage/browser` (also `~/browser` and `~/storage/browser`) | IndexedDB in this browser | **Yes** |
-| `/storage/local/<name>` | Reserved for folders of your computer (coming in a future version); empty for now | — |
+| `/storage/local/<name>` | A folder of your computer, mounted with `pyterm.storage.mount(name)` | On the computer, yes; the mount itself lasts until reload |
 | Anything else (`~/Upload`, `/tmp`, …) | Memory | No |
 
 `/storage` holds the folders kept outside Python's memory. Two links in the home folder lead there:
@@ -119,6 +120,29 @@ Earlier versions kept this folder directly at `/home/pyodide/browser`. On the fi
 >>> open("browser/hello.txt").read()
 'still here tomorrow'
 ```
+
+## Folders of your computer (/storage/local)
+
+Python can work directly on a folder of your computer:
+
+```python
+>>> from pyterm import storage
+>>> m = storage.mount("photos")          # a dialog asks you to choose a folder
+>>> m
+<Mount 'photos' at /storage/local/photos ← folder 'Holiday 2024'>
+>>> os.listdir("/storage/local/photos")
+['beach.jpg', 'notes.txt']
+>>> open("/storage/local/photos/notes.txt", "a").write("seen\n")   # saved to the computer
+>>> storage.unmount("photos")
+```
+
+- The name is the folder under `/storage/local` (letters, digits, `.`, `_`, `-`).
+- Python's changes (new, changed and deleted files) are written to the computer after every command, while a program waits for input, with `storage.save()` and when the folder is unmounted. Files added on the computer in the meantime are never deleted; `storage.refresh(name)` reads them.
+- `storage.mounts()` lists the mounted folders. Mounts last until the page is reloaded or Python is hard-restarted; mount again afterwards.
+- It needs a browser with the File System Access API (Chrome, Edge or Opera on a computer). Inside a frame of another site the browser may refuse the folder picker: open PyTerm in its own tab.
+- The folder is copied into memory, so choose folders of reasonable size.
+
+The full API is in [Custom Programs](custom-programs.md#folders-of-the-computer-pytermstorage).
 
 ## Getting files out
 

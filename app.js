@@ -153,14 +153,16 @@ function setStatus(state) {
     running: ['bg-sky-400 dot-pulse', 'Running'],
     input: ['bg-violet-400 dot-pulse', 'Waiting for input'],
     signin: ['bg-violet-400 dot-pulse', 'Waiting for sign-in'],
+    folder: ['bg-violet-400 dot-pulse', 'Waiting for a folder'],
     stopping: ['bg-amber-400 dot-pulse', 'Stopping'],
     stopped: ['bg-slate-500', 'Stopped'],
     error: ['bg-red-400', 'Failed'],
   };
   const [cls, label] = map[state];
   statusDot.className = 'w-1.5 h-1.5 rounded-full ' + cls;
-  statusText.textContent = currentProgram && (state === 'running' || state === 'input' || state === 'signin') ? `${label} · ${currentProgram}` : label;
-  const showStop = state === 'running' || state === 'input' || state === 'signin' || state === 'stopping';
+  const active = state === 'running' || state === 'input' || state === 'signin' || state === 'folder';
+  statusText.textContent = currentProgram && active ? `${label} · ${currentProgram}` : label;
+  const showStop = active || state === 'stopping';
   $('btn-stop').classList.toggle('hidden', !showStop);
   $('btn-stop').classList.toggle('inline-flex', showStop);
 }
@@ -388,6 +390,7 @@ function resetSession() {
   bannerPending = null;
   cancelRpcs();
   closeSso();
+  if (pickState) finishPick(pickState, bridgeError('cancelled', 'Cancelled'));
 }
 
 // fromStop: the user pressed Stop and Python did not stop by itself
@@ -587,7 +590,7 @@ cmd.addEventListener('paste', (e) => {
 
 document.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
-  const modal = !$('help').classList.contains('hidden') || uploader.isOpen() || !!ssoState
+  const modal = !$('help').classList.contains('hidden') || uploader.isOpen() || !!ssoState || !!pickState
     || !$('catalog').classList.contains('hidden') || !!trustState;
   if ((e.ctrlKey || e.metaKey) && key === 'o' && !modal) { e.preventDefault(); openScript(); }
   else if ((e.ctrlKey || e.metaKey) && key === 's' && !modal) { e.preventDefault(); saveTranscript(); }
@@ -1009,7 +1012,8 @@ async function launchProgram(query, extra = {}) {
 // A handler gets (args, {signal}) and returns a JSON-able value, or new Binary(value, [ArrayBuffer…]).
 // Throw an Error with a `code` to send Python a BridgeError(code, message). `signal` aborts when
 // the user presses Stop. New features: add a handler here and a wrapper module in pylib/pyterm.
-class Binary { constructor(value, blobs) { this.value = value; this.blobs = blobs; } }
+// `objects`: structured-cloneable values for the worker only (e.g. a folder handle).
+class Binary { constructor(value, blobs = [], objects = null) { this.value = value; this.blobs = blobs; this.objects = objects; } }
 const bridgeError = (code, message) => Object.assign(new Error(message), { code });
 
 const rpcHandlers = {
@@ -1051,7 +1055,7 @@ async function handleRpc(m) {
   try {
     const r = await fn(args, { signal: ctl.signal });
     if (ctl.signal.aborted) return;
-    if (r instanceof Binary) engine.rpcReply(m, r.value, r.blobs);
+    if (r instanceof Binary) engine.rpcReply(m, r.value, r.blobs, null, r.objects);
     else engine.rpcReply(m, r);
   } catch (e) {
     if (ctl.signal.aborted) return;
@@ -1087,8 +1091,98 @@ function handleEvent(name, data) {
 
 function refreshStatus() {
   if (!busy || statusText.textContent.startsWith('Stopping')) return;
-  setStatus(ssoState ? 'signin' : inputReq ? 'input' : 'running');
+  setStatus(ssoState ? 'signin' : pickState ? 'folder' : inputReq ? 'input' : 'running');
 }
+
+/* ---------- folders of the computer (pyterm.storage) ---------- */
+// storage.pick shows a dialog whose button opens the browser's folder picker (it must run
+// inside a click). The chosen FileSystemDirectoryHandle goes to the worker, which copies the
+// folder to /storage/local/<name> and writes Python's changes back.
+let pickState = null;
+const framed = (() => { try { return window.top !== window.self; } catch { return true; } })();
+const canPickFolders = typeof window.showDirectoryPicker === 'function';
+
+function pickFolder({ name, path }, { signal }) {
+  return new Promise((resolve, reject) => {
+    if (!canPickFolders) {
+      reject(bridgeError('unsupported', 'This browser cannot open folders of the computer (it needs the File System Access API: Chrome, Edge or Opera on a computer)'));
+      return;
+    }
+    if (signal.aborted) { reject(bridgeError('cancelled', 'Cancelled')); return; }
+    if (pickState) { reject(bridgeError('busy', 'Another folder is already being chosen')); return; }
+    const st = { resolve, reject, signal, working: false, failed: null };
+    st.onAbort = () => finishPick(st, bridgeError('cancelled', 'Cancelled'));
+    signal.addEventListener('abort', st.onAbort);
+    pickState = st;
+    $('pick-sub').textContent = `Requested by ${currentProgram || 'your Python code'}`;
+    $('pick-path').textContent = path;
+    $('pick-error').classList.add('hidden');
+    $('pick-open-label').textContent = 'Choose folder';
+    $('pick-open').disabled = false;
+    const dlg = $('pick');
+    dlg.classList.remove('hidden');
+    dlg.classList.add('flex');
+    refreshStatus();
+    setTimeout(() => $('pick-open').focus(), 0);
+  });
+}
+
+function finishPick(st, err, value) {
+  if (pickState !== st) return;
+  pickState = null;
+  st.signal.removeEventListener('abort', st.onAbort);
+  const dlg = $('pick');
+  dlg.classList.add('hidden');
+  dlg.classList.remove('flex');
+  refreshStatus();
+  if (inputReq || (ready && !busy)) cmd.focus({ preventScroll: true });
+  if (err) st.reject(err); else st.resolve(value);
+}
+
+function showPickError(text) {
+  const el = $('pick-error');
+  el.textContent = text;
+  el.classList.toggle('hidden', !text);
+}
+
+$('pick-open').onclick = async () => {
+  const st = pickState;
+  if (!st || st.working) return;
+  st.working = true;
+  $('pick-open').disabled = true;
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    // mode 'readwrite' asks for write access in the same step; check it to be sure
+    let perm = 'granted';
+    if (handle.queryPermission) perm = await handle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted' && handle.requestPermission) perm = await handle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') throw bridgeError('denied', 'Permission to change the folder was not given');
+    finishPick(st, null, new Binary({ folder: handle.name }, [], { handle }));
+  } catch (e) {
+    if (pickState !== st) return;
+    st.working = false;
+    $('pick-open').disabled = false;
+    if (e && e.name === 'AbortError') { st.failed = bridgeError('cancelled', 'No folder was chosen'); showPickError('No folder was chosen.'); }
+    else if (e && e.name === 'SecurityError') {
+      st.failed = bridgeError('blocked', 'The browser does not allow choosing folders here (PyTerm is inside a frame of another site). Open PyTerm in its own tab.');
+      showPickError('The browser does not allow choosing a folder inside this frame. Open PyTerm in its own tab and try again.');
+    } else {
+      st.failed = e && e.code ? e : bridgeError('error', (e && e.message) || String(e));
+      showPickError(st.failed.message);
+    }
+    $('pick-open-label').textContent = 'Try again';
+  }
+};
+$('pick-cancel').onclick = () => {
+  const st = pickState;
+  if (st) finishPick(st, st.failed || bridgeError('cancelled', 'No folder was chosen'));
+};
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pickState) $('pick-cancel').click(); });
+
+Object.assign(rpcHandlers, {
+  'storage.supported': async () => ({ supported: canPickFolders, framed }),
+  'storage.pick': (args, ctx) => pickFolder(args, ctx),
+});
 
 /* ---------- "onexit": "stop" ---------- */
 // The program that owns this run and asks Python to stop when it ends, if any.

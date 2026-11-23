@@ -11,6 +11,7 @@ PyTerm can run **interactive terminal programs**: anything that reads what you t
 - [pyterm.App reference](#pytermapp-reference)
 - [Keys inside a program](#keys-inside-a-program)
 - [Saving data between visits](#saving-data-between-visits)
+- [Folders of the computer (`pyterm.storage`)](#folders-of-the-computer-pytermstorage)
 - [Adding a program to the Programs menu](#adding-a-program-to-the-programs-menu)
 - [Loading the programs list from a URL](#loading-the-programs-list-from-a-url)
 - [Shared libraries](#shared-libraries)
@@ -153,6 +154,7 @@ With `"stop"`, the program "ends" in every case: it returns, calls `sys.exit()`,
 | `pyterm.packages` | `ainstall`, `require`, `installed_version` — [packages from PyPI](#packages-from-pypi-requires) |
 | `pyterm.programs` | The programs of the list in use: `list()`, `find(query)`, `prepare(query, refresh=False)`, `load(url)`, `source()` (async twins `alist`, `afind`, `aprepare`, `aload`, `asource`) |
 | `pyterm.sso` | Google / Microsoft sign-in and OAuth access tokens — see [Sign-in](sso.md) |
+| `pyterm.storage` | Folders of the computer under `/storage/local/<name>`: `mount`, `unmount`, `save`, `refresh`, `mounts` — [below](#folders-of-the-computer-pytermstorage) |
 
 Everything in `pyterm.console`, plus `ainstall` and `require`, is also available directly on `pyterm` (`pyterm.input`, `pyterm.App`, …), so older programs keep working. Both styles are fine:
 
@@ -213,7 +215,7 @@ The functions below live in `pyterm.console` and are re-exported by `pyterm`.
 | `pyterm.HOME` | `/home/pyodide` |
 | `pyterm.STORAGE_DIR` | `/storage` — folders kept outside Python's memory (`~/storage` links to it) |
 | `pyterm.BROWSER_DIR` | `/storage/browser` — saved in the browser (`~/browser` links to it) |
-| `pyterm.LOCAL_DIR` | `/storage/local` — reserved for folders of your computer (a future version); empty for now |
+| `pyterm.LOCAL_DIR` | `/storage/local` — folders of the computer mounted with [`pyterm.storage`](#folders-of-the-computer-pytermstorage) |
 | `pyterm.download(path, name=None)` | Send a file (or a folder, zipped) to the user's computer / Puter Drive |
 
 ### Packages
@@ -281,6 +283,43 @@ STORE = os.path.join(pyterm.BROWSER_DIR, "myapp.json")
 ```
 
 Prefer `pyterm.BROWSER_DIR` over a hard-coded path. Older programs that use `~/browser/…` or `/home/pyodide/browser/…` keep working through the link. Other folders live in memory only. See [Files & Upload](files-and-upload.md).
+
+## Folders of the computer (`pyterm.storage`)
+
+`pyterm.storage` mounts a folder of the user's computer at `/storage/local/<name>`. The name is the entry point; the user picks the folder.
+
+```python
+from pyterm import storage
+
+m = storage.mount("project")              # dialog → browser folder picker → Mount
+for f in os.listdir(m.path):               # m.path == "/storage/local/project"
+    print(f)
+with open(os.path.join(m, "out.csv"), "w") as fh:   # a Mount works as a path
+    fh.write("a,b\n1,2\n")
+storage.save("project")                    # write to the computer now (optional)
+storage.unmount("project")                 # save, then remove /storage/local/project
+```
+
+| Function | Description |
+|---|---|
+| `mount(name)` / `await amount(name)` | Show a dialog whose button opens the browser's folder picker (write permission included), copy the folder to `/storage/local/<name>` and return a `Mount`. Raises `StorageError` if the name is taken or the folder is not chosen |
+| `unmount(name, save=True)` / `await aunmount(...)` | Write Python's last changes to the computer (`save=False` drops them), then remove `/storage/local/<name>`. If saving fails the folder stays mounted. The current directory leaves the folder first. Returns the `Mount` |
+| `save(name=None)` / `await asave(...)` | Write changes now, for one folder or all. Returns `{"written", "removed"}` |
+| `refresh(name)` / `await arefresh(name)` | Save, then read the folder again, picking up changes made on the computer. Returns `{"read", "removed"}` |
+| `mounts()` | The mounted folders: `[Mount, …]` |
+| `get(name)`, `is_mounted(name)` | One mount (or `None`) / `bool` |
+| `path(name)` | `/storage/local/<name>` (mounted or not) |
+| `supported()` / `await asupported()` | `{"supported": bool, "framed": bool}`: the browser can open folders; PyTerm runs inside a frame |
+
+`Mount` has `name`, `path`, `folder` (its name on the computer), `since` (Unix time), the methods `save()`, `refresh()`, `unmount(save=True)`, and `__fspath__`.
+
+**Names**: letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 64 characters.
+
+**`StorageError.code`**: `invalid_name`, `already_mounted`, `not_empty` (`/storage/local/<name>` already contains files), `not_mounted`, `unsupported` (no File System Access API), `blocked` (the picker isn't allowed in this frame), `cancelled` (Cancel, no folder chosen, or Stop), `denied` (no write permission), `busy`, `save_failed`, `error`. Stop while the dialog is open raises `KeyboardInterrupt`.
+
+**How changes travel.** The folder is copied into Python's memory. After every command, while a program waits for input, on `save()` and on `unmount()`, files Python created or changed are written to the computer and entries Python deleted are removed there. Only entries Python knows about are ever deleted, so files added on the computer meanwhile are safe (use `refresh()` to see them). Symbolic links stay in Python. Mounts last until a reload or a hard restart.
+
+**Limits.** Chrome, Edge and Opera on a computer (not Firefox, Safari or phones). Inside a frame of another site the browser may block the picker (`blocked`). Large folders take memory and time to copy.
 
 ## Adding a program to the Programs menu
 

@@ -271,6 +271,29 @@ window.addEventListener('error',function(e){var t=e&&e.target;if(t&&t!==window&&
       </div>
     </div>
   </div>
+  <!-- Folder of the computer (pyterm.storage.mount): "Choose folder" opens the picker inside the click -->
+  <div id="pick" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="pick-title">
+    <div class="w-full max-w-sm rounded-xl border border-[#1f2933] bg-[#0f151c]">
+      <div class="px-5 pt-5 pb-4 flex items-center gap-3">
+        <span class="w-10 h-10 rounded-[10px] bg-[#1b2a3a] text-[#79c0ff] inline-flex items-center justify-center shrink-0"><i data-lucide="folder-sync" class="w-5 h-5"></i></span>
+        <div class="min-w-0">
+          <div id="pick-title" class="font-medium text-[15px] text-slate-100">Open a folder of this computer</div>
+          <div id="pick-sub" class="text-[12px] text-slate-500 mt-0.5 truncate"></div>
+        </div>
+      </div>
+      <div class="px-5 pb-5 space-y-3">
+        <p class="text-[13px] text-slate-300 leading-relaxed">The folder you choose appears in Python as</p>
+        <div id="pick-path" class="mono text-[12px] text-[#7ee787] rounded-lg border border-[#1a222b] bg-[#0b0f14] px-3 py-2 break-all"></div>
+        <p class="text-[12px] text-slate-500 leading-relaxed">Python can read its files and the changes it makes are saved to the folder on your computer. The browser asks for permission first.</p>
+        <div id="pick-error" class="hidden text-[12px] text-red-300 leading-relaxed"></div>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-3 border-t border-[#1a222b]">
+        <button type="button" class="btn-ghost" id="pick-cancel">Cancel</button>
+        <button type="button" class="btn-primary" id="pick-open"><i data-lucide="folder-open"></i><span id="pick-open-label">Choose folder</span></button>
+      </div>
+    </div>
+  </div>
+
   <!-- Load programs from URL -->
   <div id="catalog" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby="catalog-heading">
     <div class="w-full max-w-lg rounded-xl border border-[#1f2933] bg-[#0f151c]">
